@@ -1,16 +1,23 @@
-import os
-import re
-from decimal import Decimal, InvalidOperation
-
-import mysql.connector
 import questionary
-from mysql.connector import Error
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.keys import Keys
 from questionary import Choice, Style
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
+from home_library import use_cases
+from home_library.domain import (
+    Book,
+    BookDraft,
+    InvalidISBN,
+    InvalidPrice,
+    InvalidTitle,
+    normalize_isbn,
+    parse_price,
+    validate_title,
+)
+from home_library.persistence import PersistenceError, connect_database
 
 
 console = Console()
@@ -64,7 +71,7 @@ def show_header(subtitle):
     console.clear()
     console.print(
         Panel(
-            "[bold cyan]◆ HOME LIBRARY[/]\n[dim]Personal Book Catalogue[/]",
+            "[bold cyan]◆ HOME LIBRARY[/]\n[dim]Family Reading Catalogue[/]",
             border_style="cyan",
             expand=False,
         )
@@ -76,57 +83,31 @@ def pause():
     console.input("\n[dim]Press Enter to continue...[/]")
 
 
-def connect_database():
-    database = mysql.connector.connect(
-        host=os.getenv("MYSQL_HOST", "localhost"),
-        port=int(os.getenv("MYSQL_PORT", "3306")),
-        user=os.getenv("MYSQL_USER", "root"),
-        password=os.getenv("MYSQL_PASSWORD", "schoolproject"),
-    )
-    cursor = database.cursor()
-    cursor.execute("CREATE DATABASE IF NOT EXISTS home_library")
-    cursor.execute("USE home_library")
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS books ("
-        "id INT AUTO_INCREMENT PRIMARY KEY, "
-        "title VARCHAR(200) NOT NULL, "
-        "isbn VARCHAR(13) UNIQUE, "
-        "price DECIMAL(10, 2) NOT NULL, "
-        "CHECK (price >= 0))"
-    )
-    cursor.execute("ALTER TABLE books MODIFY isbn VARCHAR(13) NULL")
-    cursor.close()
-    return database
+def read_books(database, search=""):
+    with database.unit_of_work() as unit_of_work:
+        return use_cases.get_books(unit_of_work, search)
 
 
-def normalize_isbn(value):
-    isbn = re.sub(r"[\s-]", "", value).upper()
-    if len(isbn) == 10 and re.fullmatch(r"\d{9}[\dX]", isbn):
-        digits = [10 if char == "X" else int(char) for char in isbn]
-        if sum((10 - index) * digit for index, digit in enumerate(digits)) % 11 == 0:
-            return isbn
-    if len(isbn) == 13 and isbn.isdigit():
-        total = sum(
-            int(digit) * (1 if index % 2 == 0 else 3)
-            for index, digit in enumerate(isbn[:12])
-        )
-        if (10 - total % 10) % 10 == int(isbn[12]):
-            return isbn
-    return None
+def read_book(database, book_id):
+    with database.unit_of_work() as unit_of_work:
+        return use_cases.find_book(unit_of_work, book_id)
+
+
+def isbn_conflict(database, isbn, exclude_id=None):
+    with database.unit_of_work() as unit_of_work:
+        return use_cases.find_isbn_conflict(unit_of_work, isbn, exclude_id)
 
 
 def ask_title(default=""):
     while True:
-        title = text_input("Book title", default)
-        if title is None:
+        value = text_input("Book title", default)
+        if value is None:
             return None
-        title = title.strip()
-        if title:
-            if len(title) > 200:
-                console.print("[bold red]Title must be 200 characters or fewer.[/]")
-                continue
-            return title
-        console.print("[bold red]Title cannot be empty.[/]")
+        try:
+            return validate_title(value)
+        except InvalidTitle as error:
+            console.print(f"[bold red]{error}[/]")
+            default = value
 
 
 def ask_isbn(database, default="", exclude_id=None):
@@ -134,24 +115,13 @@ def ask_isbn(database, default="", exclude_id=None):
         value = text_input("ISBN-10 or ISBN-13 (optional)", default)
         if value is None:
             return CANCELLED
-        if not value.strip():
-            return None
-        isbn = normalize_isbn(value)
-        if isbn is None:
-            console.print("[bold red]Enter a valid ISBN-10 or ISBN-13.[/]")
+        try:
+            isbn = normalize_isbn(value)
+        except InvalidISBN as error:
+            console.print(f"[bold red]{error}[/]")
             default = value
             continue
-        cursor = database.cursor()
-        if exclude_id is None:
-            cursor.execute("SELECT id FROM books WHERE isbn = %s", (isbn,))
-        else:
-            cursor.execute(
-                "SELECT id FROM books WHERE isbn = %s AND id <> %s",
-                (isbn, exclude_id),
-            )
-        duplicate = cursor.fetchone()
-        cursor.close()
-        if duplicate:
+        if isbn and isbn_conflict(database, isbn, exclude_id):
             console.print("[bold red]That ISBN is already in your collection.[/]")
             default = value
             continue
@@ -163,40 +133,33 @@ def ask_price(default=""):
         value = text_input("Price in INR", default)
         if value is None:
             return None
-        if not re.fullmatch(r"\d+(\.\d{1,2})?", value.strip()):
-            console.print("[bold red]Enter a non-negative price with at most 2 decimal places.[/]")
-            default = value
-            continue
         try:
-            price = Decimal(value.strip())
-        except InvalidOperation:
-            console.print("[bold red]Enter a valid price.[/]")
+            return parse_price(value)
+        except InvalidPrice as error:
+            console.print(f"[bold red]{error}[/]")
             default = value
-            continue
-        if price > Decimal("99999999.99"):
-            console.print("[bold red]Price must be less than ₹100,000,000.[/]")
-            default = value
-            continue
-        return price.quantize(Decimal("0.01"))
 
 
 def book_fields(database, current=None):
-    current = current or ("", "", "")
-    book_id = current[0] if len(current) == 4 else None
-    title = ask_title(current[1] if len(current) == 4 else "")
+    if isinstance(current, Book):
+        defaults = (current.title, current.isbn or "", str(current.price))
+        book_id = current.id
+    elif current:
+        defaults = current
+        book_id = None
+    else:
+        defaults = ("", "", "")
+        book_id = None
+    title = ask_title(defaults[0])
     if title is None:
         return None
-    isbn = ask_isbn(
-        database,
-        (current[2] or "") if len(current) == 4 else "",
-        exclude_id=book_id,
-    )
+    isbn = ask_isbn(database, defaults[1], exclude_id=book_id)
     if isbn is CANCELLED:
         return None
-    price = ask_price(str(current[3]) if len(current) == 4 else "")
+    price = ask_price(defaults[2])
     if price is None:
         return None
-    return title, isbn, price
+    return BookDraft(title, isbn, price)
 
 
 def show_book_table(books, title="BOOKS"):
@@ -208,74 +171,81 @@ def show_book_table(books, title="BOOKS"):
     table.add_column("Title", style="white")
     table.add_column("ISBN", style="green")
     table.add_column("Price", style="yellow", justify="right")
-    for book_id, book_title, isbn, price in books:
-        table.add_row(str(book_id), book_title, isbn or "—", f"₹{price:.2f}")
+    for book in books:
+        table.add_row(
+            str(book.id),
+            book.title,
+            book.isbn or "—",
+            f"₹{book.price:.2f}",
+        )
     console.print(table)
 
 
-def get_books(database, search=None):
-    cursor = database.cursor()
-    if search:
-        pattern = f"%{search}%"
-        cursor.execute(
-            "SELECT id, title, isbn, price FROM books "
-            "WHERE title LIKE %s OR isbn LIKE %s ORDER BY title",
-            (pattern, pattern),
-        )
-    else:
-        cursor.execute("SELECT id, title, isbn, price FROM books ORDER BY title")
-    books = cursor.fetchall()
-    cursor.close()
-    return books
+def save_new_book(database, draft):
+    with database.unit_of_work() as unit_of_work:
+        book = use_cases.create_book(unit_of_work, draft)
+        unit_of_work.commit()
+        return book
+
+
+def save_book_update(database, book_id, draft):
+    with database.unit_of_work() as unit_of_work:
+        book = use_cases.update_book(unit_of_work, book_id, draft)
+        unit_of_work.commit()
+        return book
+
+
+def remove_book(database, book_id):
+    with database.unit_of_work() as unit_of_work:
+        use_cases.delete_book(unit_of_work, book_id)
+        unit_of_work.commit()
 
 
 def add_book(database):
     current = None
     while True:
-        fields = book_fields(database, current)
-        if fields is None:
+        draft = book_fields(database, current)
+        if draft is None:
             console.print("[yellow]Adding book cancelled.[/]")
             return
-        title, isbn, price = fields
-        show_book_table([(0, title, isbn, price)], "NEW BOOK")
+        show_book_table([Book(0, draft.title, draft.isbn, draft.price)], "NEW BOOK")
         action = choose("Save this book?", ["Save book", "Edit details", "Cancel"])
         if action == "Save book":
-            cursor = database.cursor()
-            cursor.execute(
-                "INSERT INTO books (title, isbn, price) VALUES (%s, %s, %s)",
-                (title, isbn, price),
-            )
-            database.commit()
-            cursor.close()
+            try:
+                save_new_book(database, draft)
+            except use_cases.DuplicateISBN as error:
+                console.print(f"[bold red]{error}[/]")
+                current = (draft.title, draft.isbn or "", str(draft.price))
+                continue
             console.print("[bold green]Book added successfully.[/]")
             return
         if action != "Edit details":
             console.print("[yellow]Adding book cancelled.[/]")
             return
-        current = (None, title, isbn, price)
+        current = (draft.title, draft.isbn or "", str(draft.price))
 
 
 def search_books(database):
     search = text_input("Search by title or ISBN (leave blank to show all)")
     if search is None:
         return
-    show_book_table(get_books(database, search.strip()))
+    show_book_table(read_books(database, search.strip()))
 
 
 def choose_book(database):
     search = text_input("Find a book by title or ISBN")
     if search is None:
         return None
-    books = get_books(database, search.strip())
+    books = read_books(database, search.strip())
     if not books:
         console.print("[yellow]No matching books found.[/]")
         return None
     choices = [
         Choice(
-            f"{title}  ·  {isbn or 'No ISBN'}  ·  ₹{price:.2f}",
-            value=book_id,
+            f"{book.title}  ·  {book.isbn or 'No ISBN'}  ·  ₹{book.price:.2f}",
+            value=book.id,
         )
-        for book_id, title, isbn, price in books
+        for book in books
     ]
     return choose("Select a book", choices)
 
@@ -284,50 +254,45 @@ def update_book(database):
     book_id = choose_book(database)
     if book_id is None:
         return
-    cursor = database.cursor()
-    cursor.execute("SELECT id, title, isbn, price FROM books WHERE id = %s", (book_id,))
-    old_book = cursor.fetchone()
-    cursor.close()
-    while True:
-        fields = book_fields(database, old_book)
-        if fields is None:
+    old_book = read_book(database, book_id)
+    while old_book:
+        draft = book_fields(database, old_book)
+        if draft is None:
             console.print("[yellow]Update cancelled.[/]")
             return
-        title, isbn, price = fields
+        preview = Book(book_id, draft.title, draft.isbn, draft.price)
         console.print("\n[bold]Updated details[/]")
-        show_book_table([(book_id, title, isbn, price)], "BOOK PREVIEW")
+        show_book_table([preview], "BOOK PREVIEW")
         action = choose("Save these changes?", ["Save changes", "Edit details", "Cancel"])
         if action == "Save changes":
-            cursor = database.cursor()
-            cursor.execute(
-                "UPDATE books SET title = %s, isbn = %s, price = %s WHERE id = %s",
-                (title, isbn, price, book_id),
-            )
-            database.commit()
-            cursor.close()
+            try:
+                save_book_update(database, book_id, draft)
+            except use_cases.DuplicateISBN as error:
+                console.print(f"[bold red]{error}[/]")
+                old_book = preview
+                continue
             console.print("[bold green]Book updated successfully.[/]")
             return
         if action != "Edit details":
             console.print("[yellow]Update cancelled.[/]")
             return
-        old_book = (book_id, title, isbn, price)
+        old_book = preview
 
 
 def delete_book(database):
     book_id = choose_book(database)
     if book_id is None:
         return
-    cursor = database.cursor()
-    cursor.execute("SELECT id, title, isbn, price FROM books WHERE id = %s", (book_id,))
-    book = cursor.fetchone()
-    cursor.close()
+    book = read_book(database, book_id)
+    if book is None:
+        console.print("[yellow]That book no longer exists.[/]")
+        return
     show_book_table([book], "DELETE BOOK")
-    confirmed = ask(questionary.confirm("Delete this book?", default=False, style=question_style))
+    confirmed = ask(
+        questionary.confirm("Delete this book?", default=False, style=question_style)
+    )
     if confirmed:
-        cursor = database.cursor()
-        cursor.execute("DELETE FROM books WHERE id = %s", (book_id,))
-        database.commit()
-        cursor.close()
+        remove_book(database, book_id)
         console.print("[bold green]Book deleted successfully.[/]")
     else:
         console.print("[yellow]Deletion cancelled.[/]")
@@ -352,7 +317,7 @@ def manage_books(database):
         if action == "Add book":
             add_book(database)
         elif action == "View all books":
-            show_book_table(get_books(database))
+            show_book_table(read_books(database))
         elif action == "Search books":
             search_books(database)
         elif action == "Update book":
@@ -367,10 +332,14 @@ def main():
         try:
             database = connect_database()
             break
-        except Error as error:
+        except PersistenceError as error:
             show_header("DATABASE CONNECTION")
-            console.print(f"[bold red]Could not connect to MySQL:[/] {error}")
-            retry = ask(questionary.confirm("Retry connection?", default=False, style=question_style))
+            console.print(f"[bold red]{error}[/]")
+            retry = ask(
+                questionary.confirm(
+                    "Retry connection?", default=False, style=question_style
+                )
+            )
             if not retry:
                 return
 
@@ -381,9 +350,13 @@ def main():
             if action == "Manage books":
                 manage_books(database)
             elif action == "Exit" or action is None:
-                if ask(questionary.confirm("Exit the library?", default=False, style=question_style)):
+                if ask(
+                    questionary.confirm(
+                        "Exit the library?", default=False, style=question_style
+                    )
+                ):
                     break
-    except Error as error:
+    except PersistenceError as error:
         console.print(f"[bold red]Database error:[/] {error}")
         pause()
     finally:

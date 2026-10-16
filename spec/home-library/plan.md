@@ -2,13 +2,17 @@
 
 ## Architecture
 
-Keep the application as a small Python terminal program. `main.py` owns the
-Rich and Questionary interface, input validation, workflows, and SQL access.
-MySQL Connector/Python executes parameterized SQL. Docker Compose runs MySQL
-8.4 with a persistent named volume; `uv` manages the Python environment.
+Keep `main.py` as the Rich and Questionary interface adapter. Put book data and
+rules in `home_library/domain`, book workflows in `home_library/use_cases`, and
+MySQL setup and SQL in `home_library/persistence`. The separate
+[`layered-architecture/spec.md`](layered-architecture/spec.md) defines these
+boundaries. Docker Compose runs MySQL 8.4 with a persistent named volume; `uv`
+manages the Python environment.
 
 ```text
-Rich / Questionary menus -> book and author workflows -> MySQL
+Rich / Questionary interface -> use cases -> persistence -> MySQL
+                                      |          |
+                                      +-> domain <-+
 ```
 
 ## Data model

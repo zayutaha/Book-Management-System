@@ -2,10 +2,12 @@
 
 ## Goal
 
-Separate Home Library's application logic into three clear parts: `domain`,
-`use_cases`, and `persistence`. Keep the existing Rich terminal UI as a thin
-entry-point adapter. The structure should make each part easy to explain and
-change without scattering SQL, validation, and prompts through one file.
+Separate the existing book catalogue into three clear parts: `domain`,
+`use_cases`, and `persistence`. Keep the Rich terminal UI as a thin entry-point
+adapter. The structure should make each part easy to explain and change without
+scattering SQL, validation, and prompts through one file. This refactor covers
+the book features that exist today; the author feature will use the same
+boundaries when it is implemented.
 
 This specification concerns code organization and boundaries. Product behavior
 remains defined by [`../spec.md`](../spec.md), and database/runtime details
@@ -36,19 +38,16 @@ home_library/
   __init__.py
   domain/
     __init__.py
-    author.py
     book.py
     errors.py
   use_cases/
     __init__.py
-    authors.py
     books.py
-    errors.py
   persistence/
     __init__.py
     database.py
+    errors.py
     schema.py
-    authors.py
     books.py
     unit_of_work.py
 ```
@@ -60,57 +59,50 @@ perform business validation itself.
 
 ## Domain
 
-Define `Author` and `Book` as simple Python domain objects. A book contains its
-ID, title, author, optional ISBN, and price. An author contains its ID and name.
-Represent prices with `Decimal`; represent an omitted ISBN as `None`.
+Define `Book` and `BookDraft` as simple Python domain objects. A book contains
+its ID, title, optional ISBN, and price. Represent prices with `Decimal` and
+an omitted ISBN as `None`.
 
 Place rules that do not require user interaction or a database here: trimmed
-non-empty names and titles, maximum text lengths, ISBN normalization and
-checksum validation, non-negative two-decimal prices, and the one-author-per-
-book relationship. Domain code must not import Rich, Questionary,
-`mysql.connector`, environment settings, or persistence modules.
+non-empty titles, maximum text lengths, ISBN normalization and checksum
+validation, and non-negative two-decimal prices. Domain code must not import
+Rich, Questionary, `mysql.connector`, environment settings, or persistence
+modules.
 
 ## Use cases
 
-Expose plain functions for the application actions, grouped by books and
-authors. Use cases receive validated command data, call domain rules, invoke
-persistence operations, and return domain objects or a clear result. They do
-not prompt, print, render tables, read environment variables, or contain SQL.
+Expose plain functions for the existing book actions. Use cases receive
+validated command data, call domain rules, invoke persistence operations, and
+return domain objects or a clear result. They do not prompt, print, render
+tables, read environment variables, or contain SQL.
 
 The supported operations are:
 
 - Create, list, search, update, and delete books.
-- Create, list, update, and delete authors.
-- List books grouped by author.
-- Create an author and its book in one save operation when the user adds a
-  missing author from a book form.
 
 Cancellation is handled by the interface before a write use case is called.
-The create-book workflow must not leave an orphan author when the user cancels
-before saving the book. Duplicate authors and deletion of an author with linked
-books return clear use-case errors for the interface to display.
 
 ## Persistence
 
 The persistence package owns MySQL connection configuration, database/table
 creation or migrations, transaction handling, parameterized SQL, and mapping
 database rows into domain objects. Keep SQL row representations private to
-their persistence modules. Return `Author` and `Book` objects rather than raw
-tuples or connector rows.
+their persistence modules and return `Book` objects rather than raw tuples or
+connector rows.
 
-Provide focused operations for author and book reads/writes. Search and
-author-grouped queries may use SQL joins, but persistence returns structured
-domain data; it does not format Rich tables. Preserve existing records when
-migrating the book-only schema to authors and `author_id`.
+Provide focused operations for book reads and writes. Persistence returns
+structured domain data; it does not format Rich tables. Keep schema setup and
+the existing optional-ISBN adjustment inside this package.
 
-Use a small Unit of Work or transaction context for writes that must succeed or
-fail together, especially saving a new author and its book. The CLI adapter
+Use a small Unit of Work or transaction context for writes. The CLI adapter
 opens the unit of work, passes it to a use case, and commits only when the use
 case succeeds; an error leaves the unit uncommitted and rolls it back. This
 mirrors Mothership's caller-owned transaction boundary, adapted to the terminal
 entry point. Avoid a generic repository framework or dependency-injection
 container; the direct `use_cases -> persistence` relationship follows
-Mothership's `use_cases -> store` pattern and is simpler to present.
+Mothership's `use_cases -> store` pattern and is simpler to present. When
+authors are implemented, add author domain, use-case, and persistence modules
+with the same structure.
 
 ## Dependency direction
 
@@ -128,14 +120,13 @@ depends on use cases and domain types, never on persistence.
 
 Domain validation errors should be specific and independent of the terminal.
 Persistence translates MySQL failures into a small persistence error type.
-Use cases translate expected conflicts, missing records, and blocked deletes
-into clear application errors. The interface chooses the wording and style of
-the displayed message.
+Use cases translate expected conflicts and missing records into clear
+application errors. The interface chooses the wording and style of the
+displayed message.
 
-Each write use case accepts the unit of work from its caller. Book and author
-creation from a single form is atomic. Updating a book, deleting a book, or
-adding an author is committed as one operation. A failed validation or
-persistence write must not partially change the catalogue.
+Each write use case accepts the unit of work from its caller. Creating,
+updating, or deleting a book is committed as one operation. A failed validation
+or persistence write must not partially change the catalogue.
 
 ## Acceptance criteria
 
@@ -145,15 +136,14 @@ persistence write must not partially change the catalogue.
   than embedding SQL.
 - Persistence modules own MySQL setup, migrations, SQL, and row mapping.
 - Callers receive domain objects instead of raw database tuples.
-- Creating a missing author with a book is atomic and cancellation writes
-  nothing.
-- Existing book and author behavior remains available through the terminal
-  interface after the refactor.
+- Existing book add, view, search, update, and delete behavior remains available
+  through the terminal interface after the refactor.
 - The package structure remains small and explainable, without generic
   repository or dependency-injection machinery.
 
 ## Out of scope
 
+- Adding author workflows as part of this book-only refactor.
 - Changing the Rich interface or product feature set.
 - Implementing future summaries, potential books, genres, tags, or family
   member histories.
