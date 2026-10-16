@@ -27,11 +27,6 @@ from home_library.domain import (
     InvalidISBN,
     InvalidPrice,
     InvalidTitle,
-    normalize_isbn,
-    parse_birth_date,
-    parse_price,
-    validate_author_name,
-    validate_title,
 )
 from home_library.persistence import PersistenceError, connect_database
 
@@ -125,130 +120,110 @@ def read_grouped_books(database):
         return use_cases.authors.get_books_grouped_by_author(unit_of_work)
 
 
-def isbn_conflict(database, isbn, exclude_id=None):
-    with database.unit_of_work() as unit_of_work:
-        return use_cases.books.find_isbn_conflict(unit_of_work, isbn, exclude_id)
-
-
 def author_name_conflict(database, name, exclude_id=None):
     with database.unit_of_work() as unit_of_work:
         return use_cases.authors.author_name_conflict(unit_of_work, name, exclude_id)
 
 
 def ask_title(default=""):
-    while True:
-        value = text_input("Book title", default)
-        if value is None:
-            return None
-        try:
-            return validate_title(value)
-        except InvalidTitle as error:
-            console.print(f"[bold red]{error}[/]")
-            default = value
+    return text_input("Book title", default)
 
 
-def ask_isbn(database, default="", exclude_id=None):
-    while True:
-        value = text_input("ISBN-10 or ISBN-13 (optional)", default)
-        if value is None:
-            return CANCELLED
-        try:
-            isbn = normalize_isbn(value)
-        except InvalidISBN as error:
-            console.print(f"[bold red]{error}[/]")
-            default = value
-            continue
-        if isbn and isbn_conflict(database, isbn, exclude_id):
-            console.print("[bold red]That ISBN is already in your collection.[/]")
-            default = value
-            continue
-        return isbn
+def ask_isbn(default=""):
+    value = text_input("ISBN-10 or ISBN-13 (optional)", default)
+    return CANCELLED if value is None else value
 
 
 def ask_price(default=""):
-    while True:
-        value = text_input("Price in INR", default)
-        if value is None:
-            return None
-        try:
-            return parse_price(value)
-        except InvalidPrice as error:
-            console.print(f"[bold red]{error}[/]")
-            default = value
+    return text_input("Price in INR", default)
 
 
-def ask_author_name(database, default="", exclude_id=None):
-    while True:
-        value = text_input("Author name", default)
-        if value is None:
-            return None
-        try:
-            name = validate_author_name(value)
-        except InvalidAuthorName as error:
-            console.print(f"[bold red]{error}[/]")
-            default = value
-            continue
-        if author_name_conflict(database, name, exclude_id):
-            console.print("[bold red]An author with that name already exists.[/]")
-            default = value
-            continue
-        return name
+def ask_author_name(default=""):
+    return text_input("Author name", default)
 
 
 def ask_birth_date(default=""):
-    while True:
-        value = text_input("Date of birth (YYYY-MM-DD)", default)
-        if value is None:
-            return None
-        try:
-            return parse_birth_date(value)
-        except InvalidBirthDate as error:
-            console.print(f"[bold red]{error}[/]")
-            default = value
+    return text_input("Date of birth (YYYY-MM-DD)", default)
 
 
 def author_fields(database, current=None, name_default=""):
     name_default = current.name if isinstance(current, (Author, AuthorDraft)) else name_default
     date_default = current.birth_date.isoformat() if isinstance(current, (Author, AuthorDraft)) else ""
     current_id = current.id if isinstance(current, Author) else None
-    name = ask_author_name(database, name_default, current_id)
+    name = ask_author_name(name_default)
     if name is None:
         return None
     birth_date = ask_birth_date(date_default)
     if birth_date is None:
         return None
-    return AuthorDraft(name, birth_date)
+    while True:
+        try:
+            draft = AuthorDraft(name, birth_date)
+        except InvalidAuthorName as error:
+            console.print(f"[bold red]{error}[/]")
+            name = ask_author_name(name)
+            if name is None:
+                return None
+            continue
+        except InvalidBirthDate as error:
+            console.print(f"[bold red]{error}[/]")
+            birth_date = ask_birth_date(str(birth_date))
+            if birth_date is None:
+                return None
+            continue
+        if author_name_conflict(database, draft.name, current_id):
+            console.print("[bold red]An author with that name already exists.[/]")
+            name = ask_author_name(name)
+            if name is None:
+                return None
+            continue
+        return draft
 
 
 def book_fields(database, current=None):
     if isinstance(current, Book):
         defaults = (current.title, current.isbn or "", str(current.price))
         author_id = current.author_id
-        book_id = current.id
     elif current:
         defaults = current[:3]
         author_id = current[3] if len(current) > 3 else None
-        book_id = None
     else:
         defaults = ("", "", "")
         author_id = None
-        book_id = None
 
     while True:
         title = ask_title(defaults[0])
         if title is None:
             return None
-        isbn = ask_isbn(database, defaults[1], exclude_id=book_id)
+        isbn = ask_isbn(defaults[1])
         if isbn is CANCELLED:
             return None
         price = ask_price(defaults[2])
         if price is None:
             return None
         selected_author_id = choose_author(database, selected_id=author_id)
-        if selected_author_id is CANCELLED:
-            defaults = (title, isbn or "", str(price))
-            continue
-        return BookDraft(title, isbn, price, selected_author_id)
+        if selected_author_id is not CANCELLED:
+            break
+        defaults = (title, isbn, price)
+
+    while True:
+        try:
+            return BookDraft(title, isbn, price, selected_author_id)
+        except InvalidTitle as error:
+            console.print(f"[bold red]{error}[/]")
+            title = ask_title(title)
+            if title is None:
+                return None
+        except InvalidISBN as error:
+            console.print(f"[bold red]{error}[/]")
+            isbn = ask_isbn(isbn or "")
+            if isbn is CANCELLED:
+                return None
+        except InvalidPrice as error:
+            console.print(f"[bold red]{error}[/]")
+            price = ask_price(str(price))
+            if price is None:
+                return None
 
 
 def show_book_table(books, title="BOOKS"):

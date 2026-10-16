@@ -22,7 +22,7 @@ class AuthorBookGroup:
 @dataclass(frozen=True)
 class AuthorDraft:
     name: str
-    birth_date: date
+    birth_date: date | str
 
     def __post_init__(self):
         object.__setattr__(self, "name", validate_author_name(self.name))

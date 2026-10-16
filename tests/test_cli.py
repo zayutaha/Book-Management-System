@@ -64,50 +64,28 @@ class InputFlowTests(unittest.TestCase):
     def setUp(self):
         self.database = MagicMock()
 
-    @patch("main.console.print")
-    @patch("main.text_input", side_effect=["", "  Dune  "])
-    def test_ask_title_retries_empty_input_and_trims_valid_input(self, text_input, print_message):
-        self.assertEqual(cli.ask_title(), "Dune")
-        self.assertEqual(text_input.call_args_list, [call("Book title", ""), call("Book title", "")])
-        print_message.assert_called_once()
+    @patch("main.text_input", return_value="  Dune  ")
+    def test_ask_title_only_collects_raw_input(self, text_input):
+        self.assertEqual(cli.ask_title(), "  Dune  ")
+        text_input.assert_called_once_with("Book title", "")
 
-    @patch("main.console.print")
-    @patch("main.text_input", side_effect=["bad-isbn", "978-0-306-40615-7"])
-    @patch("main.isbn_conflict", return_value=False)
-    def test_ask_isbn_retries_invalid_isbn(self, conflict, text_input, print_message):
-        self.assertEqual(cli.ask_isbn(self.database), "9780306406157")
-        self.assertEqual(text_input.call_args_list, [
-            call("ISBN-10 or ISBN-13 (optional)", ""),
-            call("ISBN-10 or ISBN-13 (optional)", "bad-isbn"),
-        ])
-        conflict.assert_called_once_with(self.database, "9780306406157", None)
-        print_message.assert_called_once()
-
-    @patch("main.console.print")
-    @patch("main.text_input", side_effect=["9780306406157", "978-0-306-40615-7"])
-    @patch("main.isbn_conflict", side_effect=[True, False])
-    def test_ask_isbn_retries_duplicate_isbn(self, conflict, text_input, print_message):
-        self.assertEqual(cli.ask_isbn(self.database), "9780306406157")
-        self.assertEqual(conflict.call_count, 2)
-        print_message.assert_called_once()
+    @patch("main.text_input", return_value="978-0-306-40615-7")
+    def test_ask_isbn_only_collects_raw_input(self, text_input):
+        self.assertEqual(cli.ask_isbn(""), "978-0-306-40615-7")
+        text_input.assert_called_once_with("ISBN-10 or ISBN-13 (optional)", "")
 
     @patch("main.text_input", return_value="   ")
-    def test_ask_isbn_accepts_blank_as_optional(self, text_input):
-        self.assertIsNone(cli.ask_isbn(self.database))
+    def test_ask_isbn_leaves_optional_normalization_to_domain(self, text_input):
+        self.assertEqual(cli.ask_isbn(), "   ")
 
     @patch("main.text_input", return_value=None)
     def test_ask_isbn_returns_cancellation_sentinel_on_escape(self, text_input):
-        self.assertIs(cli.ask_isbn(self.database), cli.CANCELLED)
+        self.assertIs(cli.ask_isbn(), cli.CANCELLED)
 
-    @patch("main.console.print")
-    @patch("main.text_input", side_effect=["-1", "10.25"])
-    def test_ask_price_retries_invalid_amount(self, text_input, print_message):
-        self.assertEqual(cli.ask_price(), Decimal("10.25"))
-        self.assertEqual(text_input.call_args_list, [
-            call("Price in INR", ""),
-            call("Price in INR", "-1"),
-        ])
-        print_message.assert_called_once()
+    @patch("main.text_input", return_value="-1")
+    def test_ask_price_only_collects_raw_input(self, text_input):
+        self.assertEqual(cli.ask_price(), "-1")
+        text_input.assert_called_once_with("Price in INR", "")
 
     @patch("main.text_input", return_value=None)
     def test_ask_price_returns_none_when_cancelled(self, text_input):
@@ -119,9 +97,9 @@ class InputFlowTests(unittest.TestCase):
     @patch("main.ask_title", return_value="New title")
     def test_book_fields_builds_draft_for_new_book(self, ask_title, ask_isbn, ask_price, choose_author):
         draft = cli.book_fields(self.database)
-        self.assertEqual(draft, BookDraft("New title", None, "8.00", 1))
+        self.assertEqual(draft, BookDraft("New title", "", "8.00", 1))
         ask_title.assert_called_once_with("")
-        ask_isbn.assert_called_once_with(self.database, "", exclude_id=None)
+        ask_isbn.assert_called_once_with("")
         ask_price.assert_called_once_with("")
         choose_author.assert_called_once_with(self.database, selected_id=None)
 
@@ -139,8 +117,8 @@ class InputFlowTests(unittest.TestCase):
         ask_price.assert_called_once()
 
     @patch("main.choose_author", return_value=1)
-    @patch("main.ask_price", return_value=Decimal("20.00"))
-    @patch("main.ask_isbn", return_value=None)
+    @patch("main.ask_price", return_value="20.00")
+    @patch("main.ask_isbn", return_value="")
     @patch("main.ask_title", return_value="Changed")
     def test_book_fields_uses_existing_book_as_defaults_and_excludes_its_id(
         self, ask_title, ask_isbn, ask_price, choose_author
@@ -148,9 +126,22 @@ class InputFlowTests(unittest.TestCase):
         current = make_book(9, "Original", None, "4.00")
         cli.book_fields(self.database, current)
         ask_title.assert_called_once_with("Original")
-        ask_isbn.assert_called_once_with(self.database, "", exclude_id=9)
+        ask_isbn.assert_called_once_with("")
         ask_price.assert_called_once_with("4.00")
         choose_author.assert_called_once_with(self.database, selected_id=1)
+
+    @patch("main.console.print")
+    @patch("main.choose_author", return_value=1)
+    @patch("main.ask_price", side_effect=["-1", "8.00"])
+    @patch("main.ask_isbn", return_value="")
+    @patch("main.ask_title", return_value="New title")
+    def test_book_fields_retries_invalid_price_through_draft_validation(
+        self, ask_title, ask_isbn, ask_price, choose_author, print_message
+    ):
+        draft = cli.book_fields(self.database)
+        self.assertEqual(draft, BookDraft("New title", None, "8.00", 1))
+        self.assertEqual(ask_price.call_args_list, [call(""), call("-1")])
+        print_message.assert_called_once()
 
 
 class DisplayTests(unittest.TestCase):
@@ -378,38 +369,46 @@ class AuthorFlowTests(unittest.TestCase):
     def setUp(self):
         self.database = MagicMock()
 
-    @patch("main.console.print")
     @patch("main.author_name_conflict", return_value=False)
-    @patch("main.text_input", side_effect=["123", "Ursula Le Guin"])
-    def test_author_name_retries_numeric_name(self, text_input, conflict, print_message):
-        self.assertEqual(cli.ask_author_name(self.database), "Ursula Le Guin")
-        self.assertEqual(text_input.call_count, 2)
-        conflict.assert_called_once_with(self.database, "Ursula Le Guin", None)
+    @patch("main.console.print")
+    @patch("main.text_input", side_effect=["123", "1980-01-12", "Ursula Le Guin"])
+    def test_author_fields_retries_invalid_name_using_draft_validation(
+        self, text_input, print_message, conflict
+    ):
+        draft = cli.author_fields(self.database)
+        self.assertEqual(draft, AuthorDraft("Ursula Le Guin", date(1980, 1, 12)))
+        self.assertEqual(text_input.call_count, 3)
         print_message.assert_called_once()
 
-    @patch("main.console.print")
     @patch("main.author_name_conflict", side_effect=[True, False])
-    @patch("main.text_input", side_effect=["Tolkien", "New Author"])
-    def test_author_name_retries_case_insensitive_duplicate(
-        self, text_input, conflict, print_message
+    @patch("main.console.print")
+    @patch("main.text_input", side_effect=["Tolkien", "1980-01-12", "New Author"])
+    def test_author_fields_retries_case_insensitive_duplicate(
+        self, text_input, print_message, conflict
     ):
-        self.assertEqual(cli.ask_author_name(self.database), "New Author")
+        draft = cli.author_fields(self.database)
+        self.assertEqual(draft, AuthorDraft("New Author", date(1980, 1, 12)))
         self.assertEqual(conflict.call_count, 2)
         print_message.assert_called_once()
 
+    @patch("main.author_name_conflict", return_value=False)
     @patch("main.console.print")
-    @patch("main.text_input", side_effect=["2024-02-30", "1980-01-12"])
-    def test_birth_date_retries_invalid_calendar_date(self, text_input, print_message):
-        self.assertEqual(cli.ask_birth_date(), date(1980, 1, 12))
-        self.assertEqual(text_input.call_count, 2)
+    @patch("main.text_input", side_effect=["Ursula Le Guin", "2024-02-30", "1980-01-12"])
+    def test_author_fields_retries_invalid_birth_date(
+        self, text_input, print_message, conflict
+    ):
+        draft = cli.author_fields(self.database)
+        self.assertEqual(draft, AuthorDraft("Ursula Le Guin", date(1980, 1, 12)))
+        self.assertEqual(text_input.call_count, 3)
         print_message.assert_called_once()
 
+    @patch("main.author_name_conflict", return_value=False)
     @patch("main.ask_birth_date", return_value=date(1970, 2, 3))
     @patch("main.ask_author_name", return_value="Ursula Le Guin")
-    def test_author_fields_builds_validated_draft(self, ask_name, ask_date):
+    def test_author_fields_builds_validated_draft(self, ask_name, ask_date, conflict):
         draft = cli.author_fields(self.database)
         self.assertEqual(draft, AuthorDraft("Ursula Le Guin", date(1970, 2, 3)))
-        ask_name.assert_called_once_with(self.database, "", None)
+        ask_name.assert_called_once_with("")
 
     @patch("main.ask_birth_date", return_value=None)
     @patch("main.ask_author_name", return_value="Ursula Le Guin")
@@ -506,7 +505,7 @@ class AuthorFlowTests(unittest.TestCase):
         )
 
     @patch("main.choose_author", side_effect=[cli.CANCELLED, 7])
-    @patch("main.ask_price", side_effect=[Decimal("12.00"), Decimal("12.00")])
+    @patch("main.ask_price", side_effect=["12.00", "12.00"])
     @patch("main.ask_isbn", side_effect=["9780306406157", "9780306406157"])
     @patch("main.ask_title", side_effect=["New Book", "New Book"])
     def test_book_form_preserves_values_after_inline_author_cancel(
@@ -515,7 +514,7 @@ class AuthorFlowTests(unittest.TestCase):
         draft = cli.book_fields(self.database)
         self.assertEqual(draft, BookDraft("New Book", "9780306406157", "12.00", 7))
         self.assertEqual(ask_title.call_args_list, [call(""), call("New Book")])
-        self.assertEqual(ask_isbn.call_args_list[1], call(self.database, "9780306406157", exclude_id=None))
+        self.assertEqual(ask_isbn.call_args_list[1], call("9780306406157"))
         self.assertEqual(ask_price.call_args_list[1], call("12.00"))
 
     @patch("main.console.print")

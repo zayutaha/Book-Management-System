@@ -19,7 +19,7 @@ class Book:
 class BookDraft:
     title: str
     isbn: str | None
-    price: Decimal
+    price: Decimal | str
     author_id: int
 
     def __post_init__(self):
