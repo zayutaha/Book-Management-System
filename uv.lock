@@ -8,6 +8,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "mysql-connector-python" },
+    { name = "prompt-toolkit" },
     { name = "questionary" },
     { name = "rich" },
 ]
@@ -15,6 +16,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "mysql-connector-python", specifier = ">=26.7.0" },
+    { name = "prompt-toolkit", specifier = ">=3.0.53" },
     { name = "questionary", specifier = ">=2.1.1" },
     { name = "rich" },
 ]
