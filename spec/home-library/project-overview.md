@@ -1,99 +1,85 @@
-# Home Library: Book Management System
+# Home Library: Family Reading Tracker
 
-## Project overview
+## Project purpose
 
-Home Library is a command-line program for recording books owned at home. It
-replaces handwritten lists with a searchable MySQL catalogue. The first version
-records each book's title, optional ISBN, and price, and lets the user add,
-view, search, update, or delete records.
+Home Library helps a household keep a shared record of books its members have
+read. A family may remember a story but forget its title or author; this
+catalogue gives them one place to check what has already been read. The project
+turns that familiar need into a practical Python application that can be used
+and demonstrated at school.
 
-The project is written in Python and uses SQL through MySQL Connector/Python.
-The database runs in a Docker container configured with Docker Compose, while
-`uv` installs and locks the Python dependencies. Rich gives the terminal output
-clear headings, feedback, and aligned tables. Questionary provides keyboard
-menus, with arrow keys to move, Enter to choose, and Escape to go back or cancel.
+The catalogue is intentionally small in its first release. A record represents
+a book the household has read. The current MVP lets users manage books and
+authors, find a title later, and browse books grouped by author. It is designed
+as a shared household list rather than separate accounts or a social reading
+network.
 
-## Design intent and objectives
+## Design intent
 
-The design goal is to make a useful program that is easy to explain and
-demonstrate. A user can understand the menu, enter a book in a short form, and
-read saved details in a table. The terminal keeps the project small while
-showing how Python works with a relational database.
+The program should be easy to learn and easy to explain. Its terminal interface
+uses clear menus, short forms, readable tables, and direct success or error
+messages. Users move through choices with the arrow keys, select with Enter,
+and use Escape to go back or cancel. Before a book is saved or removed, the
+program shows its details and gives the user a chance to confirm or revise.
 
-The system aims to:
+The design favors a few dependable actions over a large set of screens. The
+same book information appears consistently in lists, search results, previews,
+and author views. Input checks help prevent blank titles, invalid or duplicate
+ISBNs, and invalid prices. The project remains approachable for a student
+presentation while solving a real record-keeping problem.
 
-- Keep a persistent record of books owned at home.
-- Reduce the effort involved in checking or correcting a handwritten list.
-- Find books by a full or partial title or ISBN.
-- Demonstrate Python-to-SQL connectivity, validation, and basic record
-  management.
-- Keep the program navigable with a consistent menu and a clear way back.
+## Current MVP
 
-This is a personal catalogue for one user. It records books and prices, not
-shop sales, library circulation, or financial transactions.
+The main menu has Book Management and Author Management. Users can add, view,
+search, update, and delete book records; manage author names; and view books
+grouped by author. A book has a title, one author, an optional ISBN, and a price
+in Indian rupees. Each author can be connected to many books, while each book
+has one author. A missing author can be added from the book form, after which
+the user returns to finish entering the book.
 
-## User experience
-
-The main menu opens Book Management or exits. Book Management offers Add, View,
-Search, Update, Delete, and Back. Actions show a result and pause before the
-menu returns.
-
-For add and update, the program asks for a title, optional ISBN, and price in
-rupees. It checks title length, ISBN format and checksum, duplicate ISBNs, and
-non-negative prices with up to two decimal places. A preview lets the user save,
-edit, or cancel. Blank ISBNs display as a dash. Deletion shows the record and
-requires confirmation.
-
-Search accepts part of a title or ISBN; a blank search shows all records. The
-same aligned table displays search results and the full catalogue. Escape goes
-back or cancels a form without closing the program.
+Search accepts part of a title, ISBN, or author name. Results are displayed in
+tables that show enough information to identify the book. Deleting a book
+requires confirmation. An author with linked books cannot be removed until the
+books are reassigned or deleted. The MVP is a local shared catalogue; it does
+not identify which family member read each title or record when it was read.
 
 <div style="page-break-after: always"></div>
 
-## System design and data management
+## Future development
 
-The application is a single Python program. Its interface collects choices and
-input, validation protects the data, and SQL statements read or change the
-records in MySQL. The database connection is configured through environment
-variables, with defaults that match the included local Docker Compose setup.
-On startup, the program creates the database and table if they are missing.
-Docker Compose keeps MySQL's data in a named volume so records remain after a
-container restart.
+The following ideas are part of the longer-term vision and are deliberately
+outside the current MVP:
 
-The database has one `books` table with four fields:
+- **Family summaries:** let family members write short summaries or notes about
+  a book, so they can remember what they thought of it.
+- **Potential books:** keep a separate list of books the family may want to
+  read, distinct from the record of books already read.
+- **Genres:** assign genres and browse or group books by genre.
+- **Tags:** add flexible tags and search for books using them.
+- **Reading history:** record who read each book and when, if the family needs
+  individual histories later.
 
-- `id`: generated integer primary key used to select a record.
-- `title`: required book title, up to 200 characters.
-- `isbn`: optional ISBN-10 or ISBN-13, unique when supplied.
-- `price`: required non-negative price stored as `DECIMAL(10, 2)`.
+These features should be added in later phases after the book and author flows
+are dependable. Keeping them out of the MVP makes it possible to focus on the
+main task: recording and finding books the family has read. The full future
+scope is listed in `spec.md`.
 
-The program uses parameterized SQL for user-provided values. ISBN validation
-checks the ISBN-10 or ISBN-13 checksum, and the database's unique constraint
-provides a second safeguard against duplicate ISBNs. Empty ISBN input is saved
-as SQL `NULL`, which permits several books without ISBNs. Prices use Python's
-`Decimal` type and MySQL's fixed-decimal type so values are not stored as
-approximate binary floating-point numbers.
+## Scope and value
 
-## Scope, security, and future development
+Home Library replaces handwritten lists and scattered notes with a persistent
+digital record. It can save time when a family wants to remember whether a book
+has already been read, find an author, or browse their reading history by
+author. It also demonstrates how a Python interface can validate information
+and manage related records in a database.
 
-This phase does not include author records, multiple copies, lending, borrowers,
-categories, shelf locations, accounts, or a graphical interface. The database
-uses the local credentials supplied for the school-project Compose setup; it is
-intended for a trusted local demonstration and is not configured as a public
-multi-user service. Users should keep the database container and its credentials
-on their own computer.
+The current release does not handle lending, multiple physical copies, book
+sales, online lookup, accounts, or cloud access. It is intended for use on a
+trusted local computer. Those limits keep the project useful without making it
+hard to build, operate, or describe.
 
-The design leaves room to add features later without making the first version
-hard to understand. A next phase could add author records and link each book to
-one author, then provide an author-grouped view. Other possible extensions
-include categories, locations, multiple copies, import/export, or a graphical
-interface. Such changes should be planned separately so the basic catalogue
-continues to have a clear data model and straightforward menus.
+## Implementation documentation
 
-## Conclusion
-
-Home Library turns a familiar task—keeping track of books at home—into a
-tangible Python and SQL project. It combines a simple keyboard-driven interface
-with persistent MySQL storage and validation that protects the catalogue from
-common input mistakes. Its limited first-phase scope keeps the program easy to
-present while providing a sound starting point for future improvements.
+This overview explains the project's purpose, user experience, and product
+scope. The separate `plan.md` records the technical design, database schema,
+migration steps, interface workflows, and verification approach. `tasks.md`
+tracks implementation work and future phases.
