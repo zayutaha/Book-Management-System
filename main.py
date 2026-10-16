@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 import mysql.connector
 import questionary
 from mysql.connector import Error
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.keys import Keys
 from questionary import Choice, Style
 from rich.console import Console
@@ -27,10 +28,15 @@ question_style = Style(
 
 
 def ask(question):
-    @question.application.key_bindings.add(Keys.Escape, eager=True)
+    escape_bindings = KeyBindings()
+
+    @escape_bindings.add(Keys.Escape, eager=True)
     def cancel(event):
         event.app.exit(result=None)
 
+    question.application.key_bindings = merge_key_bindings(
+        [question.application.key_bindings, escape_bindings]
+    )
     return question.ask(kbi_msg="")
 
 
