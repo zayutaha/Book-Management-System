@@ -114,6 +114,9 @@ def ask_title(default=""):
             return None
         title = title.strip()
         if title:
+            if len(title) > 200:
+                console.print("[bold red]Title must be 200 characters or fewer.[/]")
+                continue
             return title
         console.print("[bold red]Title cannot be empty.[/]")
 
@@ -217,8 +220,9 @@ def get_books(database, search=None):
 
 
 def add_book(database):
+    current = None
     while True:
-        fields = book_fields(database)
+        fields = book_fields(database, current)
         if fields is None:
             console.print("[yellow]Adding book cancelled.[/]")
             return
@@ -238,6 +242,7 @@ def add_book(database):
         if action != "Edit details":
             console.print("[yellow]Adding book cancelled.[/]")
             return
+        current = (None, title, isbn, price)
 
 
 def search_books(database):
