@@ -14,6 +14,7 @@ from rich.table import Table
 
 
 console = Console()
+CANCELLED = object()
 question_style = Style(
     [
         ("qmark", "fg:cyan bold"),
@@ -89,10 +90,11 @@ def connect_database():
         "CREATE TABLE IF NOT EXISTS books ("
         "id INT AUTO_INCREMENT PRIMARY KEY, "
         "title VARCHAR(200) NOT NULL, "
-        "isbn VARCHAR(13) NOT NULL UNIQUE, "
+        "isbn VARCHAR(13) UNIQUE, "
         "price DECIMAL(10, 2) NOT NULL, "
         "CHECK (price >= 0))"
     )
+    cursor.execute("ALTER TABLE books MODIFY isbn VARCHAR(13) NULL")
     cursor.close()
     return database
 
@@ -129,8 +131,10 @@ def ask_title(default=""):
 
 def ask_isbn(database, default="", exclude_id=None):
     while True:
-        value = text_input("ISBN-10 or ISBN-13", default)
+        value = text_input("ISBN-10 or ISBN-13 (optional)", default)
         if value is None:
+            return CANCELLED
+        if not value.strip():
             return None
         isbn = normalize_isbn(value)
         if isbn is None:
@@ -184,10 +188,10 @@ def book_fields(database, current=None):
         return None
     isbn = ask_isbn(
         database,
-        current[2] if len(current) == 4 else "",
+        (current[2] or "") if len(current) == 4 else "",
         exclude_id=book_id,
     )
-    if isbn is None:
+    if isbn is CANCELLED:
         return None
     price = ask_price(str(current[3]) if len(current) == 4 else "")
     if price is None:
@@ -205,7 +209,7 @@ def show_book_table(books, title="BOOKS"):
     table.add_column("ISBN", style="green")
     table.add_column("Price", style="yellow", justify="right")
     for book_id, book_title, isbn, price in books:
-        table.add_row(str(book_id), book_title, isbn, f"₹{price:.2f}")
+        table.add_row(str(book_id), book_title, isbn or "—", f"₹{price:.2f}")
     console.print(table)
 
 
@@ -268,7 +272,7 @@ def choose_book(database):
         return None
     choices = [
         Choice(
-            f"{title}  ·  {isbn}  ·  ₹{price:.2f}",
+            f"{title}  ·  {isbn or 'No ISBN'}  ·  ₹{price:.2f}",
             value=book_id,
         )
         for book_id, title, isbn, price in books

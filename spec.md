@@ -11,11 +11,11 @@ authors, loans, physical shelf locations, or multiple copies.
 
 ## Book data and lifecycle
 
-Each book has a generated integer ID, title, ISBN, and price in Indian rupees.
-The title is required and may contain at most 200 characters. ISBN is required,
-must be a valid ISBN-10 or ISBN-13, and must be unique in the collection. Spaces
-and hyphens in entered ISBN values are ignored. Price is required, non-negative,
-and may have at most two decimal places.
+Each book has a generated integer ID, title, optional ISBN, and price in Indian
+rupees. The title is required and may contain at most 200 characters. When
+provided, ISBN must be a valid ISBN-10 or ISBN-13 and must be unique in the
+collection. Spaces and hyphens in entered ISBN values are ignored. Price is
+required, non-negative, and may have at most two decimal places.
 
 Users can add a book, list all books, search by title or ISBN, update a selected
 book, and delete a selected book after confirmation. Changes are stored in MySQL
@@ -44,7 +44,7 @@ The `books` table has these fields:
 | --- | --- | --- |
 | `id` | `INT` | Primary key, auto-increment |
 | `title` | `VARCHAR(200)` | Required |
-| `isbn` | `VARCHAR(13)` | Required, unique |
+| `isbn` | `VARCHAR(13)` | Optional, unique when provided |
 | `price` | `DECIMAL(10, 2)` | Required, zero or greater |
 
 The MySQL service stores its data in a named Docker volume. Connection values
@@ -72,7 +72,9 @@ keyboard input and Unicode characters used by the interface.
 ## Acceptance criteria
 
 - The program starts and connects to the included MySQL Compose service.
-- Users can add a book with a valid unique ISBN and a non-negative price.
+- Users can add a book with or without an ISBN and a non-negative price.
+- A provided ISBN must be valid and unique; blank ISBN values are stored as
+  `NULL`.
 - Invalid or duplicate ISBN values, empty titles, and invalid prices are rejected
   before a database write.
 - All books display in an aligned table with ID, title, ISBN, and price.

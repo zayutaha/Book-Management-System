@@ -21,18 +21,19 @@ Keep the earlier prototype outside the phase-one Git history.
 ## Database setup
 
 On connection, create the `home_library` database and `books` table if needed.
-Use a generated integer primary key, a required title, a unique ISBN, and an
-exact `DECIMAL(10, 2)` price with a non-negative database constraint. Commit
-each create, update, or delete operation explicitly.
+Use a generated integer primary key, a required title, an optional unique ISBN,
+and an exact `DECIMAL(10, 2)` price with a non-negative database constraint.
+Store an omitted ISBN as `NULL`. Commit each create, update, or delete operation
+explicitly.
 
 ## Book workflows
 
-For add and update, collect and validate the title, ISBN, and price before
-showing a Rich preview. Let the user save, edit the details, or cancel. Validate
-ISBN-10 and ISBN-13 checksums and query the database for duplicate ISBN values;
-exclude the selected row during an update. Search title and ISBN with a
-parameterized `LIKE` query. Display results in title order. Require confirmation
-before deleting a selected record.
+For add and update, collect and validate the title, optional ISBN, and price
+before showing a Rich preview. Let the user save, edit the details, or cancel.
+An empty ISBN means no ISBN; otherwise validate ISBN-10 and ISBN-13 checksums
+and query the database for duplicates, excluding the selected row during an
+update. Search title and ISBN with a parameterized `LIKE` query. Display results
+in title order. Require confirmation before deleting a selected record.
 
 ## Navigation
 
