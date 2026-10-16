@@ -20,8 +20,8 @@
 - [x] Add `authors` table with a case-insensitive unique name constraint and a
   required `birth_date`.
 - [x] Add required `books.author_id` foreign key with delete restriction.
-- [x] Implement a versioned migration that discards old prototype book rows
-  once and creates the final required-author schema.
+- [x] Create the current required-author schema for a fresh database without
+  modifying earlier database schemas.
 - [x] Add author persistence operations, including search and computed book
   counts.
 

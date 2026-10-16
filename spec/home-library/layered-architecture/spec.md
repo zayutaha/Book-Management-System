@@ -95,16 +95,16 @@ There is no author-deletion use case.
 
 ## Persistence
 
-The persistence package owns MySQL connection configuration, database/table
-creation or migrations, transaction handling, parameterized SQL, and mapping
+The persistence package owns MySQL connection configuration, fresh database
+table creation, transaction handling, parameterized SQL, and mapping
 database rows into domain objects. Keep SQL row representations private to
 their persistence modules and return `Book` or `Author` objects rather than
 raw tuples or connector rows.
 
 Provide focused operations for author and book reads and writes. Persistence
-returns structured domain data; it does not format Rich tables. Keep schema
-setup and the versioned migration that discards prototype book rows inside
-this package.
+returns structured domain data; it does not format Rich tables. Schema setup
+creates the current tables for a fresh database and does not migrate older
+schemas.
 
 Use a small Unit of Work or transaction context for writes. The CLI adapter
 opens the unit of work, passes it to a use case, and commits only when the use
@@ -146,7 +146,8 @@ unique constraint. Do not add author deletion.
 - Domain modules have no imports from the interface or persistence layers.
 - Use cases contain workflow coordination and call persistence functions rather
   than embedding SQL.
-- Persistence modules own MySQL setup, migrations, SQL, and row mapping.
+- Persistence modules own MySQL setup, fresh schema creation, SQL, and row
+  mapping.
 - Callers receive domain objects instead of raw database tuples.
 - Author and book workflows stay within their domain, use-case, and
   persistence modules.

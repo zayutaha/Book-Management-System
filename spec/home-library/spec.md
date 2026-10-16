@@ -55,14 +55,13 @@ left-arrow collapses the row. Escape returns to the previous menu. Because
 every book has an author, there is no unassigned-books group. Authors with no
 books show an empty-state message when expanded.
 
-## Migration of prototype data
+## Database setup
 
-The earlier book-only prototype may contain books that have no author. During
-the one-time migration to this feature, discard those existing prototype book
-records. Do not invent author records or keep books without authors. Preserve
-the database and create or migrate its schema so that new book records require
-an author. Tell the user that prototype book records will be cleared before
-running the migration.
+The application supports a fresh database using the current schema. It does
+not migrate or modify databases created by earlier project versions. Before
+using this version with an existing database, the user must create a fresh
+database themselves. The application must not automatically delete or rewrite
+existing tables or records.
 
 ## Interface behavior
 
@@ -95,7 +94,7 @@ histories.
 - Editing an author updates the details displayed for every linked book.
 - The grouped view has one row per author, supports keyboard expand/collapse,
   and includes authors with zero books.
-- The one-time migration clears old prototype book rows and leaves the schema
-  enforcing the required author relationship.
+- Fresh database setup creates the current schema with the required author
+  relationship and does not alter existing tables.
 - Existing book title, optional ISBN, price, search, and CRUD behavior continue
   to work.

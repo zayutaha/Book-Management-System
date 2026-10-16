@@ -64,22 +64,6 @@ class FakeConnection:
         self.in_transaction = False
 
 
-class SchemaCursor(FakeCursor):
-    def __init__(self, books_exist=False, author_id_exists=False, failing_statement=None):
-        super().__init__(failing_statement)
-        self.books_exist = books_exist
-        self.author_id_exists = author_id_exists
-
-    def execute(self, statement, params=None):
-        super().execute(statement, params)
-        if "table_name = %s" in statement and "information_schema.tables" in statement:
-            self.result = (int(self.books_exist),)
-        elif "column_name = %s" in statement:
-            self.result = (int(self.author_id_exists),)
-        elif "information_schema.key_column_usage" in statement:
-            self.result = (int(self.author_id_exists),)
-
-
 class UnitOfWorkTests(unittest.TestCase):
     def test_uncommitted_scope_rolls_back(self):
         connection = FakeConnection()
@@ -150,7 +134,6 @@ class UnitOfWorkTests(unittest.TestCase):
 class SchemaTests(unittest.TestCase):
     def setUp(self):
         self.connection = FakeConnection()
-        self.connection.cursor_value = SchemaCursor()
 
     def test_creates_final_schema_for_a_fresh_database(self):
         initialize_schema(self.connection, "home_library_test")
@@ -164,21 +147,11 @@ class SchemaTests(unittest.TestCase):
         self.assertIn("price DECIMAL(10, 2) NOT NULL", create_books)
         self.assertIn("CHECK (price >= 0)", create_books)
         self.assertIn("REFERENCES authors(id) ON DELETE RESTRICT", create_books)
-        self.assertFalse(any("schema_version" in item for item in statements))
+        self.assertFalse(any("information_schema" in item for item in statements))
+        self.assertFalse(any("DROP TABLE" in item for item in statements))
+        self.assertFalse(any("ALTER TABLE" in item for item in statements))
         self.assertIn(("commit",), self.connection.calls)
         self.assertTrue(self.connection.cursor_value.closed)
-
-    def test_migrates_old_database_by_clearing_only_prototype_books(self):
-        self.connection.cursor_value = SchemaCursor(books_exist=True)
-        with self.assertWarnsRegex(RuntimeWarning, "clear old prototype books"):
-            initialize_schema(self.connection, "home_library_test")
-        statements = self.connection.cursor_value.statements
-        self.assertIn("DROP TABLE books", statements)
-        create_books = next(item for item in statements if "CREATE TABLE IF NOT EXISTS books" in item)
-        self.assertIn("author_id INT NOT NULL", create_books)
-        self.assertIn("isbn VARCHAR(13) NULL UNIQUE", create_books)
-        self.assertFalse(any("ALTER TABLE" in statement for statement in statements))
-        self.assertFalse(any("schema_version" in statement for statement in statements))
 
     def test_rejects_unsafe_database_name_before_opening_cursor(self):
         with self.assertRaisesRegex(PersistenceError, "unsupported characters"):
@@ -187,20 +160,20 @@ class SchemaTests(unittest.TestCase):
 
     def test_mysql_schema_error_rolls_back_and_wraps(self):
         failing_statement = "USE `home_library_test`"
-        self.connection.cursor_value = SchemaCursor(failing_statement=failing_statement)
+        self.connection.cursor_value = FakeCursor(failing_statement=failing_statement)
         with self.assertRaisesRegex(PersistenceError, "Could not initialize the database"):
             initialize_schema(self.connection, "home_library_test")
         self.assertIn(("rollback",), self.connection.calls)
         self.assertTrue(self.connection.cursor_value.closed)
 
-    def test_current_database_is_not_dropped_or_altered_on_restart(self):
-        self.connection.cursor_value = SchemaCursor(books_exist=True, author_id_exists=True)
+    def test_schema_setup_uses_create_if_missing_without_compatibility_checks(self):
         initialize_schema(self.connection, "home_library_test")
-        self.assertNotIn("DROP TABLE books", self.connection.cursor_value.statements)
-        self.assertFalse(
-            any("ALTER TABLE" in statement for statement in self.connection.cursor_value.statements)
-        )
-        self.assertFalse(any("schema_version" in statement for statement in self.connection.cursor_value.statements))
+        statements = self.connection.cursor_value.statements
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS authors" in item for item in statements))
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS books" in item for item in statements))
+        self.assertFalse(any("information_schema" in item for item in statements))
+        self.assertFalse(any("DROP TABLE" in item for item in statements))
+        self.assertFalse(any("ALTER TABLE" in item for item in statements))
 
 
 if __name__ == "__main__":

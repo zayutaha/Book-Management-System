@@ -90,22 +90,12 @@ must use `COUNT(books.id)` with a left join so authors with zero books remain
 visible. Grouped-book queries must use parameterized SQL and return structured
 domain data, not connector rows or formatted output.
 
-## Migration
+## Database setup
 
-Use a versioned migration so the book-only schema can be distinguished from
-the new schema. The user explicitly chose to discard all existing prototype
-book rows because they do not have required authors. During migration:
-
-1. Create the authors table and its case-insensitive unique name constraint.
-2. Delete existing rows from the prototype `books` table.
-3. Add the required `author_id` column and its foreign key.
-4. Record the schema version so the deletion cannot run again on later starts.
-
-Do not create an `Unknown` author or leave a nullable `author_id`. The migration
-must preserve the database and new schema while intentionally clearing only
-the old prototype book records. Show a clear notice before deleting those
-records. On a fresh database, create the final schema directly without a
-cleanup step.
+Create the current tables when the configured database is fresh. Do not inspect,
+migrate, drop, or alter tables from earlier project versions. Users who need to
+run this phase must configure a fresh database themselves. Do not automatically
+delete or rewrite user data.
 
 ## CLI flows
 
@@ -131,14 +121,13 @@ and selection accessible by keyboard.
 Add domain tests for author name and date validation; use-case tests for
 duplicate-name handling, book counts, author assignment, and update behavior;
 persistence tests for case-insensitive uniqueness, foreign keys, counts,
-grouped results, and the one-time migration; CLI tests for author menu routing,
+grouped results, and fresh schema setup; CLI tests for author menu routing,
 searchable selection, inline author creation/cancellation, form state
 preservation, validation, and grouped-view keyboard behavior.
 
 Run unit tests without a database and opt-in MySQL integration tests against a
-disposable schema. Verify that the prototype migration removes old book rows
-once, preserves the new schema on a subsequent start, and does not touch the
-normal user database during tests.
+disposable fresh schema. Verify the current tables and constraints are created
+without touching the normal user database during tests.
 
 ## Out of scope
 

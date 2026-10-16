@@ -42,10 +42,10 @@ that author inline and return to the unfinished book form with its details
 preserved. Author selection and search use arrow-key navigation. Search accepts
 a partial, case-insensitive title, ISBN, or author name. The grouped view shows
 one row per author and lets users expand a row to see its books. Authors cannot
-be deleted. The one-time migration discards book rows left by the earlier
-prototype because they do not have required authors. The MVP is a local shared
-catalogue; it does not identify which family member read each title or record
-when it was read.
+be deleted. The application creates the current schema for a fresh database
+and does not migrate or modify databases from earlier project versions. The
+MVP is a local shared catalogue; it does not identify which family member read
+each title or record when it was read.
 
 <div style="page-break-after: always"></div>
 
@@ -85,5 +85,5 @@ hard to build, operate, or describe.
 
 This overview explains the project's purpose, user experience, and product
 scope. The separate `plan.md` records the technical design, database schema,
-migration steps, interface workflows, and verification approach. `tasks.md`
+interface workflows, and verification approach. `tasks.md`
 tracks implementation work and future phases.

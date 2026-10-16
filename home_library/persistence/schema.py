@@ -1,36 +1,8 @@
 import re
-import warnings
 
 from mysql.connector import Error
 
 from .errors import PersistenceError
-
-def _count(cursor, query, params=()):
-    cursor.execute(query, params)
-    return cursor.fetchone()[0]
-
-
-def _table_exists(cursor, table_name):
-    return bool(
-        _count(
-            cursor,
-            "SELECT COUNT(*) FROM information_schema.tables "
-            "WHERE table_schema = DATABASE() AND table_name = %s",
-            (table_name,),
-        )
-    )
-
-
-def _column_exists(cursor, table_name, column_name):
-    return bool(
-        _count(
-            cursor,
-            "SELECT COUNT(*) FROM information_schema.columns "
-            "WHERE table_schema = DATABASE() AND table_name = %s AND column_name = %s",
-            (table_name, column_name),
-        )
-    )
-
 
 def _create_authors(cursor):
     cursor.execute(
@@ -70,14 +42,6 @@ def initialize_schema(connection, database_name="home_library"):
         cursor = connection.cursor()
         use_database(cursor, database_name)
         _create_authors(cursor)
-        if _table_exists(cursor, "books") and not _column_exists(cursor, "books", "author_id"):
-            warnings.warn(
-                "The Home Library setup will clear old prototype books "
-                "because those records have no author.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            cursor.execute("DROP TABLE books")
         _create_books(cursor)
         connection.commit()
     except Error as error:

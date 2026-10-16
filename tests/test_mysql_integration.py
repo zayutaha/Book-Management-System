@@ -1,7 +1,6 @@
 import os
 import re
 import unittest
-import warnings
 from datetime import date
 from decimal import Decimal
 from uuid import uuid4
@@ -45,34 +44,7 @@ class MySQLBookIntegrationTests(unittest.TestCase):
         if not re.fullmatch(r"home_library_test_[a-f0-9]+", cls.database_name):
             raise AssertionError("Generated test database name was unsafe")
 
-        admin = mysql.connector.connect(**cls.settings)
-        cursor = admin.cursor()
-        try:
-            cursor.execute(f"CREATE DATABASE `{cls.database_name}`")
-            cursor.execute(f"USE `{cls.database_name}`")
-            cursor.execute(
-                "CREATE TABLE books ("
-                "id INT AUTO_INCREMENT PRIMARY KEY, "
-                "title VARCHAR(200) NOT NULL, "
-                "isbn VARCHAR(13) NOT NULL UNIQUE, "
-                "price DECIMAL(10, 2) NOT NULL)"
-            )
-            cursor.execute(
-                "INSERT INTO books (title, isbn, price) VALUES (%s, %s, %s)",
-                ("Migration check", "9780306406157", Decimal("1.25")),
-            )
-            admin.commit()
-        except Exception:
-            admin.rollback()
-            raise
-        finally:
-            cursor.close()
-            admin.close()
-
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter("always")
-            cls.database = connect_database(cls.database_name)
-        cls.migration_warnings = [str(item.message) for item in captured]
+        cls.database = connect_database(cls.database_name)
         cursor = cls.database._connection.cursor()
         try:
             cursor.execute(
@@ -80,9 +52,20 @@ class MySQLBookIntegrationTests(unittest.TestCase):
                 "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'books' AND COLUMN_NAME = 'isbn'",
                 (cls.database_name,),
             )
-            cls.migrated_isbn_nullable = cursor.fetchone()[0]
-            cursor.execute("SELECT title, isbn, price FROM books WHERE title = %s", ("Migration check",))
-            cls.migrated_existing_record = cursor.fetchone()
+            cls.isbn_nullable = cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT IS_NULLABLE FROM information_schema.columns "
+                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'books' AND COLUMN_NAME = 'author_id'",
+                (cls.database_name,),
+            )
+            cls.author_nullable = cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.key_column_usage "
+                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'books' "
+                "AND COLUMN_NAME = 'author_id' AND REFERENCED_TABLE_NAME = 'authors'",
+                (cls.database_name,),
+            )
+            cls.author_foreign_key_count = cursor.fetchone()[0]
         finally:
             cursor.close()
 
@@ -123,28 +106,10 @@ class MySQLBookIntegrationTests(unittest.TestCase):
             uow.commit()
             return book
 
-    def test_schema_migration_clears_legacy_books_and_adds_required_author_fk(self):
-        self.assertEqual(self.migrated_isbn_nullable, "YES")
-        self.assertIsNone(self.migrated_existing_record)
-        self.assertTrue(any("clear old prototype books" in item for item in self.migration_warnings))
-        cursor = self.database._connection.cursor()
-        try:
-            cursor.execute(
-                "SELECT COUNT(*) FROM information_schema.columns "
-                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'books' "
-                "AND COLUMN_NAME = 'author_id' AND IS_NULLABLE = 'NO'",
-                (self.database_name,),
-            )
-            self.assertEqual(cursor.fetchone()[0], 1)
-            cursor.execute(
-                "SELECT COUNT(*) FROM information_schema.key_column_usage "
-                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'books' "
-                "AND COLUMN_NAME = 'author_id' AND REFERENCED_TABLE_NAME = 'authors'",
-                (self.database_name,),
-            )
-            self.assertEqual(cursor.fetchone()[0], 1)
-        finally:
-            cursor.close()
+    def test_fresh_schema_has_nullable_isbn_and_required_author_foreign_key(self):
+        self.assertEqual(self.isbn_nullable, "YES")
+        self.assertEqual(self.author_nullable, "NO")
+        self.assertEqual(self.author_foreign_key_count, 1)
 
     def test_create_and_read_book_with_optional_isbn_and_decimal_price(self):
         created = self.add_book("The Hobbit", None, "19.5")
