@@ -176,13 +176,11 @@ class SchemaTests(unittest.TestCase):
         with self.assertWarnsRegex(RuntimeWarning, "clear old prototype books"):
             initialize_schema(self.connection, "home_library_test")
         statements = self.connection.cursor_value.statements
-        self.assertIn("DELETE FROM books", statements)
-        self.assertIn("ALTER TABLE books ADD COLUMN author_id INT NOT NULL AFTER title", statements)
-        self.assertIn(
-            "ALTER TABLE books ADD CONSTRAINT fk_books_author "
-            "FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE RESTRICT",
-            statements,
-        )
+        self.assertIn("DROP TABLE books", statements)
+        create_books = next(item for item in statements if "CREATE TABLE IF NOT EXISTS books" in item)
+        self.assertIn("author_id INT NOT NULL", create_books)
+        self.assertIn("isbn VARCHAR(13) NULL UNIQUE", create_books)
+        self.assertFalse(any("ALTER TABLE" in statement for statement in statements))
 
     def test_rejects_unsafe_database_name_before_opening_cursor(self):
         with self.assertRaisesRegex(PersistenceError, "unsupported characters"):
@@ -201,9 +199,13 @@ class SchemaTests(unittest.TestCase):
         self.connection.cursor_value = SchemaCursor(versioned=True)
         initialize_schema(self.connection, "home_library_test")
         self.assertNotIn("DELETE FROM books", self.connection.cursor_value.statements)
+        self.assertNotIn("DROP TABLE books", self.connection.cursor_value.statements)
         self.assertNotIn(
             "INSERT IGNORE INTO schema_version (version) VALUES (%s)",
             self.connection.cursor_value.statements,
+        )
+        self.assertFalse(
+            any("ALTER TABLE" in statement for statement in self.connection.cursor_value.statements)
         )
 
 

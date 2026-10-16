@@ -5,13 +5,34 @@ from mysql.connector import Error
 
 from .errors import PersistenceError
 
-
 SCHEMA_VERSION = 2
 
 
 def _count(cursor, query, params=()):
     cursor.execute(query, params)
     return cursor.fetchone()[0]
+
+
+def _table_exists(cursor, table_name):
+    return bool(
+        _count(
+            cursor,
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_schema = DATABASE() AND table_name = %s",
+            (table_name,),
+        )
+    )
+
+
+def _column_exists(cursor, table_name, column_name):
+    return bool(
+        _count(
+            cursor,
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = %s AND column_name = %s",
+            (table_name, column_name),
+        )
+    )
 
 
 def _create_authors(cursor):
@@ -38,91 +59,52 @@ def _create_books(cursor):
     )
 
 
-def _table_exists(cursor, table_name):
-    return bool(
-        _count(
-            cursor,
-            "SELECT COUNT(*) FROM information_schema.tables "
-            "WHERE table_schema = DATABASE() AND table_name = %s",
-            (table_name,),
-        )
+def use_database(cursor, database_name):
+    cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{database_name}`")
+    cursor.execute(f"USE `{database_name}`")
+
+
+def ensure_schema_compatibility(cursor, connection):
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (version INT NOT NULL PRIMARY KEY)"
     )
-
-
-def _column_exists(cursor, table_name, column_name):
-    return bool(
-        _count(
-            cursor,
-            "SELECT COUNT(*) FROM information_schema.columns "
-            "WHERE table_schema = DATABASE() AND table_name = %s AND column_name = %s",
-            (table_name, column_name),
-        )
+    versioned = _count(
+        cursor,
+        "SELECT COUNT(*) FROM schema_version WHERE version = %s",
+        (SCHEMA_VERSION,),
     )
+    if versioned:
+        return
 
-
-def _foreign_key_exists(cursor):
-    return bool(
-        _count(
-            cursor,
-            "SELECT COUNT(*) FROM information_schema.key_column_usage "
-            "WHERE table_schema = DATABASE() AND table_name = 'books' "
-            "AND column_name = 'author_id' AND referenced_table_name = 'authors'",
+    if _table_exists(cursor, "books") and not _column_exists(cursor, "books", "author_id"):
+        warnings.warn(
+            "The Home Library migration will clear old prototype books "
+            "because those records have no author.",
+            RuntimeWarning,
+            stacklevel=2,
         )
+        cursor.execute("DROP TABLE books")
+
+    _create_authors(cursor)
+    _create_books(cursor)
+    cursor.execute(
+        "INSERT IGNORE INTO schema_version (version) VALUES (%s)",
+        (SCHEMA_VERSION,),
     )
+    connection.commit()
 
 
 def initialize_schema(connection, database_name="home_library"):
     if not isinstance(database_name, str) or not re.fullmatch(r"[A-Za-z0-9_]+", database_name):
         raise PersistenceError("Database name contains unsupported characters.")
+
     cursor = None
     try:
         cursor = connection.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{database_name}`")
-        cursor.execute(f"USE `{database_name}`")
-        cursor.execute(
-            "CREATE TABLE IF NOT EXISTS schema_version (version INT NOT NULL PRIMARY KEY)"
-        )
-        versioned = _count(
-            cursor,
-            "SELECT COUNT(*) FROM schema_version WHERE version = %s",
-            (SCHEMA_VERSION,),
-        )
-        if versioned:
-            cursor.execute("ALTER TABLE books MODIFY isbn VARCHAR(13) NULL")
-            connection.commit()
-            return
-
-        books_exist = _table_exists(cursor, "books")
+        use_database(cursor, database_name)
+        ensure_schema_compatibility(cursor, connection)
         _create_authors(cursor)
-        if not books_exist:
-            _create_books(cursor)
-        elif not _column_exists(cursor, "books", "author_id"):
-            warnings.warn(
-                "The Home Library migration will clear old prototype books "
-                "because those records have no author.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            cursor.execute("DELETE FROM books")
-            cursor.execute(
-                "ALTER TABLE books ADD COLUMN author_id INT NOT NULL AFTER title"
-            )
-            cursor.execute(
-                "ALTER TABLE books ADD CONSTRAINT fk_books_author "
-                "FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE RESTRICT"
-            )
-        else:
-            cursor.execute("ALTER TABLE books MODIFY author_id INT NOT NULL")
-            if not _foreign_key_exists(cursor):
-                cursor.execute(
-                    "ALTER TABLE books ADD CONSTRAINT fk_books_author "
-                    "FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE RESTRICT"
-                )
-        cursor.execute("ALTER TABLE books MODIFY isbn VARCHAR(13) NULL")
-        cursor.execute(
-            "INSERT IGNORE INTO schema_version (version) VALUES (%s)",
-            (SCHEMA_VERSION,),
-        )
+        _create_books(cursor)
         connection.commit()
     except Error as error:
         connection.rollback()
