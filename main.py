@@ -1,12 +1,15 @@
 import questionary
+from difflib import SequenceMatcher
 from prompt_toolkit.application import Application
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.styles import Style as PromptStyle
+from prompt_toolkit.widgets import TextArea
 from questionary import Choice, Style
 from rich.console import Console
 from rich.panel import Panel
@@ -36,7 +39,6 @@ from home_library.persistence import PersistenceError, connect_database
 console = Console()
 CANCELLED = object()
 ADD_AUTHOR = object()
-SEARCH_AGAIN = object()
 question_style = Style(
     [
         ("qmark", "fg:cyan bold"),
@@ -205,8 +207,8 @@ def ask_birth_date(default=""):
             default = value
 
 
-def author_fields(database, current=None):
-    name_default = current.name if isinstance(current, (Author, AuthorDraft)) else ""
+def author_fields(database, current=None, name_default=""):
+    name_default = current.name if isinstance(current, (Author, AuthorDraft)) else name_default
     date_default = current.birth_date.isoformat() if isinstance(current, (Author, AuthorDraft)) else ""
     current_id = current.id if isinstance(current, Author) else None
     name = ask_author_name(database, name_default, current_id)
@@ -323,10 +325,10 @@ def save_author_update(database, author_id, draft):
         return author
 
 
-def add_author(database, return_author=False):
+def add_author(database, return_author=False, initial_name=""):
     current = None
     while True:
-        draft = author_fields(database, current)
+        draft = author_fields(database, current, initial_name)
         if draft is None:
             if not return_author:
                 console.print("[yellow]Adding author cancelled.[/]")
@@ -350,47 +352,179 @@ def add_author(database, return_author=False):
 
 
 def choose_author(database, selected_id=None, include_add=True):
-    selected_author = read_author(database, selected_id) if selected_id else None
-    default_search = selected_author.name if selected_author else ""
-    while True:
-        search = text_input("Search authors by name", default_search)
-        if search is None:
-            return CANCELLED
-        authors = read_authors(database, search.strip())
-        if not authors:
-            console.print("[yellow]No matching authors found.[/]")
-            if not include_add:
-                continue
-            action = choose("No matching author", ["Add author", "Search again", "Cancel"])
-            if action == "Add author":
-                author = add_author(database, return_author=True)
-                return author.id if author else CANCELLED
-            if action == "Cancel" or action is None:
-                return CANCELLED
-            default_search = ""
-            continue
+    authors = read_authors(database)
+    selected = run_author_picker(authors, selected_id, include_add)
+    if isinstance(selected, tuple) and selected[0] is ADD_AUTHOR:
+        author = add_author(database, return_author=True, initial_name=selected[1])
+        return author.id if author else CANCELLED
+    return selected
 
-        choices = [
-            Choice(
-                f"{author.name} · born {author.birth_date.isoformat()} · "
-                f"{author.book_count} books",
-                value=author.id,
+
+def fuzzy_author_matches(authors, query):
+    normalized = query.casefold().strip()
+    if not normalized:
+        return list(authors)
+
+    query_words = normalized.split()
+    scored = []
+    for author in authors:
+        name = author.name.casefold()
+        name_words = name.split()
+        if normalized in name:
+            score = 2.0 + len(normalized) / max(len(name), 1)
+        else:
+            whole_name_score = SequenceMatcher(None, normalized, name).ratio()
+            word_scores = [
+                max(SequenceMatcher(None, query_word, name_word).ratio() for name_word in name_words)
+                for query_word in query_words
+            ]
+            score = max(whole_name_score, sum(word_scores) / len(word_scores))
+            if score < 0.45:
+                continue
+        scored.append((score, author))
+    if len(normalized) == 1:
+        return [author for _, author in sorted(scored, key=lambda item: item[1].name.casefold())]
+    return [author for _, author in sorted(scored, key=lambda item: (-item[0], item[1].name.casefold()))]
+
+
+class AuthorPicker:
+    def __init__(self, authors, selected_id=None, include_add=True):
+        self.authors = list(authors)
+        self.selected_id = selected_id
+        self.include_add = include_add
+        self.query = ""
+        self.selected = 0
+        if selected_id is not None:
+            self.selected = next(
+                (index for index, author in enumerate(self.authors) if author.id == selected_id),
+                0,
             )
-            for author in authors
-        ]
-        if include_add:
-            choices.append(Choice("＋ Add author", value=ADD_AUTHOR))
-        choices.append(Choice("Search again", value=SEARCH_AGAIN))
-        selected = choose("Select an author", choices)
-        if selected is None:
-            return CANCELLED
-        if selected is ADD_AUTHOR:
-            author = add_author(database, return_author=True)
-            return author.id if author else CANCELLED
-        if selected is SEARCH_AGAIN:
-            default_search = ""
-            continue
-        return selected
+
+    def matches(self):
+        return fuzzy_author_matches(self.authors, self.query)
+
+    def can_create(self):
+        query = self.query.strip()
+        if not self.include_add or not query:
+            return False
+        return not any(author.name.casefold() == query.casefold() for author in self.authors)
+
+    def options(self):
+        options = [(author, author.id) for author in self.matches()]
+        if self.can_create():
+            options.append((None, ADD_AUTHOR))
+        return options
+
+    def move(self, amount):
+        options = self.options()
+        if options:
+            self.selected = (self.selected + amount) % len(options)
+
+    def set_query(self, query):
+        self.query = query
+        matches = self.matches()
+        if not query and self.selected_id is not None:
+            selected_index = next(
+                (index for index, author in enumerate(matches) if author.id == self.selected_id),
+                None,
+            )
+            self.selected = selected_index if selected_index is not None else 0
+        else:
+            self.selected = 0
+
+    def render(self):
+        options = self.options()
+        lines = FormattedText()
+        if not options:
+            lines.append(("class:empty", "  No authors match this search.\n"))
+            return lines
+        for index, (author, value) in enumerate(options):
+            style = "class:selected" if index == self.selected else "class:author"
+            marker = "❯ " if index == self.selected else "  "
+            if value is ADD_AUTHOR:
+                lines.append((style, f"{marker}＋ Create author: {self.query.strip()}\n"))
+            else:
+                detail = f" · born {author.birth_date.isoformat()} · {author.book_count} books"
+                lines.append((style, f"{marker}{author.name}{detail}\n"))
+        return lines
+
+
+def run_author_picker(authors, selected_id=None, include_add=True):
+    picker = AuthorPicker(authors, selected_id, include_add)
+    search = TextArea(
+        prompt="Search authors: ",
+        multiline=False,
+        style="class:search",
+    )
+    results_window = Window(FormattedTextControl(picker.render), wrap_lines=False)
+
+    def search_changed(buffer):
+        picker.set_query(buffer.text)
+        results_window.vertical_scroll = 0
+
+    search.buffer.on_text_changed += search_changed
+    bindings = KeyBindings()
+
+    @bindings.add(Keys.Up, eager=True)
+    def move_up(event):
+        picker.move(-1)
+        results_window.vertical_scroll = max(0, picker.selected - 2)
+        event.app.invalidate()
+
+    @bindings.add(Keys.Down, eager=True)
+    def move_down(event):
+        picker.move(1)
+        results_window.vertical_scroll = max(0, picker.selected - 2)
+        event.app.invalidate()
+
+    @bindings.add(Keys.Enter, eager=True)
+    def select(event):
+        options = picker.options()
+        if options:
+            value = options[picker.selected][1]
+            if value is ADD_AUTHOR:
+                value = (ADD_AUTHOR, picker.query.strip())
+            event.app.exit(result=value)
+
+    @bindings.add(Keys.Escape, eager=True)
+    def cancel(event):
+        event.app.exit(result=CANCELLED)
+
+    application = Application(
+        layout=Layout(
+            HSplit(
+                [
+                    Window(
+                        FormattedTextControl(
+                            [
+                                ("class:title", "SELECT AUTHOR\n"),
+                                ("class:help", "Type to filter (fuzzy).  ↑/↓ move  Enter select/create  Esc back\n"),
+                            ]
+                        ),
+                        height=Dimension(min=2),
+                    ),
+                    search,
+                    Window(height=1, char="─", style="class:divider"),
+                    results_window,
+                ]
+            ),
+            focused_element=search,
+        ),
+        key_bindings=bindings,
+        style=PromptStyle.from_dict(
+            {
+                "title": "bold #00d7ff",
+                "help": "#888888",
+                "selected": "bold #00d7ff",
+                "author": "#ffffff",
+                "empty": "italic #888888",
+                "search": "bold #ffffff",
+                "divider": "#555555",
+            }
+        ),
+        full_screen=True,
+    )
+    return application.run()
 
 
 def add_book(database):

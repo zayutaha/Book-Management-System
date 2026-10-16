@@ -416,38 +416,94 @@ class AuthorFlowTests(unittest.TestCase):
     def test_author_fields_returns_none_when_birth_date_is_cancelled(self, ask_name, ask_date):
         self.assertIsNone(cli.author_fields(self.database))
 
-    @patch("main.choose", return_value=5)
+    @patch("main.run_author_picker", return_value=5)
     @patch("main.read_authors", return_value=[make_author()])
-    @patch("main.text_input", return_value="  Herbert ")
-    def test_author_picker_searches_and_returns_selected_author(
-        self, text_input, read_authors, choose
+    def test_author_picker_loads_all_authors_and_returns_selection(
+        self, read_authors, run_picker
     ):
         self.assertEqual(cli.choose_author(self.database), 5)
-        read_authors.assert_called_once_with(self.database, "Herbert")
-        choices = choose.call_args.args[1]
-        self.assertIn("1920-10-08", choices[0].title)
-        self.assertEqual(choices[0].value, 1)
+        read_authors.assert_called_once_with(self.database)
+        run_picker.assert_called_once_with([make_author()], None, True)
 
     @patch("main.add_author", return_value=make_author(7, "New Author"))
-    @patch("main.choose", return_value="Add author")
-    @patch("main.console.print")
+    @patch("main.run_author_picker", return_value=(cli.ADD_AUTHOR, "New Author"))
     @patch("main.read_authors", return_value=[])
-    @patch("main.text_input", return_value="New Author")
     def test_author_picker_offers_inline_author_creation(
-        self, text_input, read_authors, print_message, choose, add_author
+        self, read_authors, run_picker, add_author
     ):
         self.assertEqual(cli.choose_author(self.database), 7)
-        add_author.assert_called_once_with(self.database, return_author=True)
+        add_author.assert_called_once_with(self.database, return_author=True, initial_name="New Author")
 
     @patch("main.add_author", return_value=None)
-    @patch("main.choose", return_value="Add author")
-    @patch("main.console.print")
+    @patch("main.run_author_picker", return_value=(cli.ADD_AUTHOR, "New Author"))
     @patch("main.read_authors", return_value=[])
-    @patch("main.text_input", return_value="New Author")
     def test_canceled_inline_author_returns_cancel_sentinel_to_book_form(
-        self, text_input, read_authors, print_message, choose, add_author
+        self, read_authors, run_picker, add_author
     ):
         self.assertIs(cli.choose_author(self.database), cli.CANCELLED)
+
+    def test_author_picker_lists_every_author_before_search(self):
+        authors = [make_author(1, "Frank Herbert"), make_author(2, "Ursula Le Guin")]
+        picker = cli.AuthorPicker(authors)
+        self.assertEqual(picker.matches(), authors)
+        self.assertEqual([value for _, value in picker.options()], [1, 2])
+
+    def test_author_picker_fuzzy_search_finds_typo_and_ranks_close_match(self):
+        authors = [make_author(1, "J. R. R. Tolkien"), make_author(2, "Ursula Le Guin")]
+        matches = cli.fuzzy_author_matches(authors, "tolkein")
+        self.assertEqual([author.id for author in matches], [1])
+
+    def test_author_picker_adds_create_row_for_new_typed_name(self):
+        picker = cli.AuthorPicker([make_author()])
+        picker.set_query("New Writer")
+        self.assertEqual(picker.options()[-1], (None, cli.ADD_AUTHOR))
+        rendered = "".join(fragment for _, fragment in picker.render())
+        self.assertIn("Create author: New Writer", rendered)
+
+    def test_author_picker_omits_create_row_for_case_insensitive_exact_match(self):
+        picker = cli.AuthorPicker([make_author(name="Frank Herbert")])
+        picker.set_query(" frank herbert ")
+        self.assertFalse(picker.can_create())
+        self.assertEqual([value for _, value in picker.options()], [1])
+
+    def test_author_picker_preselects_existing_author_for_book_edit(self):
+        authors = [make_author(1, "First Author"), make_author(2, "Second Author")]
+        picker = cli.AuthorPicker(authors, selected_id=2)
+        self.assertEqual(picker.selected, 1)
+
+    @patch("main.Application")
+    def test_author_picker_arrow_keys_move_selection_then_enter_chooses(self, application_factory):
+        application = application_factory.return_value
+
+        def run_picker():
+            bindings = application_factory.call_args.kwargs["key_bindings"]
+            event = SimpleNamespace(app=SimpleNamespace(invalidate=MagicMock(), exit=MagicMock()))
+            bindings.get_bindings_for_keys((Keys.Down,))[-1].handler(event)
+            bindings.get_bindings_for_keys((Keys.Enter,))[-1].handler(event)
+            return event.app.exit.call_args.kwargs["result"]
+
+        application.run.side_effect = run_picker
+        authors = [make_author(1, "First Author"), make_author(2, "Second Author")]
+        self.assertEqual(cli.run_author_picker(authors), 2)
+
+    @patch("main.Application")
+    def test_author_picker_enter_selects_create_row_for_typed_new_name(self, application_factory):
+        application = application_factory.return_value
+
+        def run_picker():
+            layout = application_factory.call_args.kwargs["layout"]
+            search = layout.container.get_children()[1].content
+            search.buffer.text = "New Writer"
+            bindings = application_factory.call_args.kwargs["key_bindings"]
+            event = SimpleNamespace(app=SimpleNamespace(invalidate=MagicMock(), exit=MagicMock()))
+            bindings.get_bindings_for_keys((Keys.Enter,))[-1].handler(event)
+            return event.app.exit.call_args.kwargs["result"]
+
+        application.run.side_effect = run_picker
+        self.assertEqual(
+            cli.run_author_picker([make_author()]),
+            (cli.ADD_AUTHOR, "New Writer"),
+        )
 
     @patch("main.choose_author", side_effect=[cli.CANCELLED, 7])
     @patch("main.ask_price", side_effect=[Decimal("12.00"), Decimal("12.00")])
