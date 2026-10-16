@@ -76,7 +76,8 @@ cursors and commit successful writes.
 
 ## Database startup and migration
 
-Connect using `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and `MYSQL_PASSWORD`.
+Connect using `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, and
+`MYSQL_DATABASE_NAME` (default `home_library`).
 Create the database and tables when they do not exist. Since the current app
 creates tables directly at startup, add a small versioned schema check or
 idempotent migration steps before changing the existing `books` table. Migrate

@@ -1,13 +1,17 @@
+import re
+
 from mysql.connector import Error
 
 from .errors import PersistenceError
 
 
-def initialize_schema(connection):
+def initialize_schema(connection, database_name="home_library"):
+    if not re.fullmatch(r"[A-Za-z0-9_]+", database_name):
+        raise PersistenceError("Database name contains unsupported characters.")
     cursor = connection.cursor()
     try:
-        cursor.execute("CREATE DATABASE IF NOT EXISTS home_library")
-        cursor.execute("USE home_library")
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{database_name}`")
+        cursor.execute(f"USE `{database_name}`")
         cursor.execute(
             "CREATE TABLE IF NOT EXISTS books ("
             "id INT AUTO_INCREMENT PRIMARY KEY, "

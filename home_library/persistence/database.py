@@ -20,7 +20,8 @@ class Database:
         self._connection.close()
 
 
-def connect_database() -> Database:
+def connect_database(database_name=None) -> Database:
+    database_name = database_name or os.getenv("MYSQL_DATABASE_NAME", "home_library")
     settings = {
         "host": os.getenv("MYSQL_HOST", "localhost"),
         "port": int(os.getenv("MYSQL_PORT", "3306")),
@@ -30,7 +31,7 @@ def connect_database() -> Database:
     connection = None
     try:
         connection = mysql.connector.connect(**settings)
-        initialize_schema(connection)
+        initialize_schema(connection, database_name)
         return Database(connection)
     except Error as error:
         if connection is not None:
