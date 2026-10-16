@@ -1,104 +1,147 @@
-# Home Library Technical Implementation Plan
+# Home Library Author Feature Implementation Plan
 
-## Architecture
+This document describes implementation details for the product behavior in
+[`spec.md`](spec.md). Keep the implementation in the existing
+`domain` / `use_cases` / `persistence` layers and the Rich CLI adapter.
 
-Keep `main.py` as the Rich and Questionary interface adapter. Put book data and
-rules in `home_library/domain`, book workflows in `home_library/use_cases`, and
-MySQL setup and SQL in `home_library/persistence`. The separate
-[`layered-architecture/spec.md`](layered-architecture/spec.md) defines these
-boundaries. Docker Compose runs MySQL 8.4 with a persistent named volume; `uv`
-manages the Python environment.
+## Runtime and architecture
+
+Continue using Python managed by `uv`, Rich and Questionary for the terminal
+interface, MySQL for persistence, and Docker Compose for the local database.
+Keep `main.py` focused on prompts, navigation, rendering, and calling use
+cases. Keep SQL and connector code out of the CLI and domain.
 
 ```text
-Rich / Questionary interface -> use cases -> persistence -> MySQL
-                                      |          |
-                                      +-> domain <-+
+main.py -> use_cases -> persistence -> MySQL
+               |             |
+               +-> domain <-+
 ```
 
-## Data model
+Suggested modules:
 
-Create two tables in `home_library`:
+```text
+home_library/
+  domain/
+    author.py
+    book.py
+    errors.py
+  use_cases/
+    authors.py
+    books.py
+  persistence/
+    authors.py
+    books.py
+    schema.py
+    unit_of_work.py
+```
+
+## Domain
+
+Add an `Author` read model with `id`, `name`, `birth_date`, and computed
+`book_count`, plus an `AuthorDraft` for validated create/update input. Represent
+birth dates as `datetime.date`. Keep the book count as query output; do not
+store or accept it as editable data.
+
+Add validation for trimmed author names, length from 2 through 200 characters,
+at least one letter, and no numeric characters. Allow ordinary Unicode
+letters, spaces, and common name punctuation. Reject names that are blank or
+consist of fewer than two characters after trimming. Validate that birth dates
+are real dates and are not later than the current date.
+
+Extend the `Book`/`BookDraft` domain representation with the required author
+identifier and author display name where needed by list/search/grouped
+queries. Keep current title, optional ISBN checksum/uniqueness, and Decimal
+price rules. A book draft without an author ID is invalid.
+
+## Use cases
+
+Add author operations for create, list, search, find, and update. Author
+creation and rename must enforce case-insensitive name uniqueness; translate a
+database unique-key race to a clear `DuplicateAuthorName` application error.
+Search trims input and supports partial case-insensitive name matches.
+
+Update book create and update workflows to require a valid author ID. Add
+operations to search authors for book selection, return book counts with
+author records, and list books grouped by author. Grouped results include
+authors with zero books and return their books in title order. Keep all write
+operations inside the caller-provided Unit of Work.
+
+There is no author delete use case. The persistence foreign key also uses
+`ON DELETE RESTRICT` as a data-integrity backstop.
+
+## Persistence
+
+Create an `authors` table and update `books`:
 
 | Table | Field | Type and constraints |
 | --- | --- | --- |
 | `authors` | `id` | `INT AUTO_INCREMENT PRIMARY KEY` |
-| `authors` | `name` | `VARCHAR(200) NOT NULL UNIQUE` |
+| `authors` | `name` | `VARCHAR(200) NOT NULL`, unique case-insensitively |
+| `authors` | `birth_date` | `DATE NOT NULL` |
 | `books` | `id` | `INT AUTO_INCREMENT PRIMARY KEY` |
 | `books` | `title` | `VARCHAR(200) NOT NULL` |
 | `books` | `author_id` | `INT NOT NULL`, foreign key to `authors.id` |
 | `books` | `isbn` | `VARCHAR(13) NULL UNIQUE` |
 | `books` | `price` | `DECIMAL(10, 2) NOT NULL`, zero or greater |
 
-One author can have many books; each book has one author. Use `ON DELETE
-RESTRICT` so an author with linked books cannot be removed accidentally. Keep
-book IDs stable when adding the relation. Add the author table and `author_id`
-with a migration that preserves existing books; assign existing books to an
-explicit placeholder author such as `Unknown` before making the foreign key
-required. Do not silently discard current records.
+Use a case-insensitive database collation or a normalized unique key for author
+names while preserving the entered display casing. Queries for author counts
+must use `COUNT(books.id)` with a left join so authors with zero books remain
+visible. Grouped-book queries must use parameterized SQL and return structured
+domain data, not connector rows or formatted output.
 
-## Author workflows
+## Migration
 
-Author Management provides add, list, update, and delete actions. Author names
-are trimmed, required, limited to 200 characters, and unique without regard to
-case. Reject duplicate names with a clear message. Deleting an author with
-linked books is blocked and explains that those books must first be reassigned
-or deleted.
+Use a versioned migration so the book-only schema can be distinguished from
+the new schema. The user explicitly chose to discard all existing prototype
+book rows because they do not have required authors. During migration:
 
-For a book form, show existing authors as an arrow-selectable list and include
-an Add author choice. Adding an author opens a short name form, saves the author,
-then returns to the pending book form with the new author selected. Escape
-cancels author creation and returns to the book form. Keep this flow inside the
-book workflow so the user does not lose entered book details.
+1. Create the authors table and its case-insensitive unique name constraint.
+2. Delete existing rows from the prototype `books` table.
+3. Add the required `author_id` column and its foreign key.
+4. Record the schema version so the deletion cannot run again on later starts.
 
-## Book workflows
+Do not create an `Unknown` author or leave a nullable `author_id`. The migration
+must preserve the database and new schema while intentionally clearing only
+the old prototype book records. Show a clear notice before deleting those
+records. On a fresh database, create the final schema directly without a
+cleanup step.
 
-Keep the current add, view, search, update, and delete actions. Add author
-selection to create and update. Before saving, preview title, author, optional
-ISBN, and price. Preserve the existing ISBN-10/13 checksum validation and
-uniqueness check; store a blank ISBN as SQL `NULL`. Parse prices with
-`Decimal`, reject negative values and more than two decimal places, and store
-them in `DECIMAL(10, 2)`.
+## CLI flows
 
-Search with parameterized `LIKE` conditions on title and ISBN, and a join to
-author name. Show the author name in every book table. Add an author-grouped
-view that returns one table with an author column and the books under each
-author (or a joined list of titles per author); keep keyboard menu navigation
-for choosing this view. Order authors and titles alphabetically.
+Add Author Management to the main menu with add, view, search, and edit. Do not
+show a delete action. Author tables show name, birth date, and derived book
+count. Add and edit forms preview values before saving.
 
-## Navigation and errors
+Build a reusable searchable author picker for create and edit book workflows.
+Picker rows should include both name and birth date. When no result matches,
+offer an inline create-author action. After successful author creation, return
+to the pending book form with all book fields preserved and the new author
+selected. If author creation is canceled, return to the pending book form and
+keep entered values.
 
-The main menu opens Book Management, Author Management, or Exit. Both managers
-have a Back action. Use arrow keys and Enter for selection; bind Escape to
-return `None` from prompts so forms can cancel safely. Keep the existing Rich
-feedback and preview/confirm patterns. Catch duplicate-key and foreign-key
-errors at the workflow boundary and show a short explanation; always close
-cursors and commit successful writes.
-
-## Database startup and migration
-
-Connect using `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, and
-`MYSQL_DATABASE_NAME` (default `home_library`).
-Create the database and tables when they do not exist. Since the current app
-creates tables directly at startup, add a small versioned schema check or
-idempotent migration steps before changing the existing `books` table. Migrate
-old records in this order: create authors, insert the placeholder author if
-needed, add nullable `author_id`, backfill existing books, then make
-`author_id` required and add its foreign key. A fresh database may create the
-final schema directly.
+For author grouping, render one keyboard-selectable row per author. Enter or
+right-arrow expands the selected row to show that author's book titles; Enter
+or left-arrow collapses it; Escape returns to the previous menu. Include
+authors with no books and show a short empty state when expanded. Keep search
+and selection accessible by keyboard.
 
 ## Verification
 
-Compile the Python app and validate the Compose file. Exercise both menus against
-MySQL. Verify author create/list/update/delete, duplicate-name rejection,
-referential protection, adding a book with an existing author, creating an
-author from the book form without losing entered details, book update and
-search by author, and author-grouped display. Verify blank and supplied ISBNs,
-Escape cancellation, data persistence, and migration of an existing book-only
-database. Keep disposable test records out of the final database.
+Add domain tests for author name and date validation; use-case tests for
+duplicate-name handling, book counts, author assignment, and update behavior;
+persistence tests for case-insensitive uniqueness, foreign keys, counts,
+grouped results, and the one-time migration; CLI tests for author menu routing,
+searchable selection, inline author creation/cancellation, form state
+preservation, validation, and grouped-view keyboard behavior.
 
-## Deliberately deferred
+Run unit tests without a database and opt-in MySQL integration tests against a
+disposable schema. Verify that the prototype migration removes old book rows
+once, preserves the new schema on a subsequent start, and does not touch the
+normal user database during tests.
 
-Do not implement family summaries, potential books, genres, tag search,
-per-person reading history, or reading dates in this phase. The current reading
-catalogue contains books the household has read; each entry does not need a
-separate read/unread state yet.
+## Out of scope
+
+Do not add author deletion, author biographies, summaries, potential-book
+lists, genres, tags, reading dates, family profiles, per-person histories,
+accounts, or a graphical interface in this phase.

@@ -1,83 +1,101 @@
-# Home Library Reading Tracker Specification
+# Home Library Author Management Specification
 
 ## Goal
 
-Help a household keep a simple shared record of the books its members have
-read. The catalogue is the family's reading list: adding a book means it has
-been read. The first release keeps this record small and easy to use, while
-leaving room for family notes and discovery features later.
+Extend the Home Library catalogue so every book is linked to one author. The
+author can be selected from the existing catalogue or created while a book is
+being added or edited. Keep the app local, single-user, and simple to operate
+from its Rich terminal interface.
 
-## Current MVP
+## MVP behavior
 
-The MVP manages books and their authors in a Rich terminal interface. A book
-has a title, one author, an optional ISBN, and a price in Indian rupees. An
-author has a name and may be linked to multiple books. Each book has exactly
-one author in this version.
+The application has separate Book Management and Author Management menus.
+Books can be added, viewed, searched, updated, and deleted. Authors can be
+added, viewed, searched, and edited. Authors cannot be deleted. Every book
+must have exactly one author, and an author may have zero or more books.
 
-Users can add, view, search, update, and delete books; add, view, update, and
-delete authors; find books by title, ISBN, or author; and view books grouped by
-author. The interface uses arrow-key menus, Enter to select, and Escape to go
-back or cancel. Forms validate input and show a preview before saving. Deleting
-an author who still has books requires those books to be reassigned or removed
-first.
+A book keeps its existing title, optional ISBN, and price fields, and gains a
+required author. ISBN remains optional and unique when supplied. Search supports
+partial, case-insensitive matches for book title, ISBN, and author name.
 
-ISBN is optional. When supplied, it must be a valid ISBN-10 or ISBN-13 and
-unique within the catalogue. Spaces and hyphens are ignored. Price is
-non-negative and has at most two decimal places. A blank ISBN is stored as
-`NULL` and displayed as a dash.
+## Author information and rules
+
+An author has a required name and required date of birth. Names are trimmed,
+must contain at least two characters, include a letter, and cannot contain
+numbers. Names must be unique without regard to capitalization. Different
+authors with the same name are not allowed. Date of birth must be a valid
+calendar date and cannot be in the future; the terminal form uses `YYYY-MM-DD`.
+
+Each author view displays the number of linked books. This count is calculated
+from the books table, starts at zero, and changes as books are added or removed.
+The user does not enter or edit the count.
+
+## Book and author workflows
+
+When adding or editing a book, the user must select an author using a
+searchable, arrow-key list. If the desired author is not present, the user can
+create one from that flow. The app validates and saves the author, selects it
+for the pending book, and returns to the unfinished book form with entered
+book details intact. If author creation is canceled with Escape, the app
+returns to that unfinished book form so the user can choose another author or
+cancel the book operation.
+
+Author Management supports adding, viewing, searching, and editing authors.
+Author selection and edit selection are searchable and distinguish results
+using their birth dates. Editing an author changes the existing author record,
+so every linked book displays the updated name and date. No author deletion
+action is provided.
+
+## Grouped books view
+
+The Book Management menu includes a view grouped by author. It shows one
+selectable row per author, including authors with no books. Enter or the
+right-arrow expands an author row to show its book titles. Enter or the
+left-arrow collapses the row. Escape returns to the previous menu. Because
+every book has an author, there is no unassigned-books group. Authors with no
+books show an empty-state message when expanded.
+
+## Migration of prototype data
+
+The earlier book-only prototype may contain books that have no author. During
+the one-time migration to this feature, discard those existing prototype book
+records. Do not invent author records or keep books without authors. Preserve
+the database and create or migrate its schema so that new book records require
+an author. Tell the user that prototype book records will be cleared before
+running the migration.
+
+## Interface behavior
+
+Use Rich tables and arrow-key menus with Enter to select and Escape to go back
+or cancel. Forms validate values, preserve entered values when returning from
+inline author creation, and preview changes before saving. Confirm deletion of
+books. Show clear validation, duplicate-name, not-found, and database error
+messages. Pause after completed actions before returning to the menu.
 
 ## Future scope
 
-These features are intentionally excluded from the MVP and may be planned in
-later phases:
-
-- Short family-written summaries or notes for each book.
-- A separate list of potential books the family wants to read.
-- Genre assignment and views grouped by genre.
-- Tags that can be searched and used to organize books.
-- Reading dates, individual family-member profiles, and per-person reading
-  histories.
-
-## Interface and behavior
-
-The main menu opens Book Management, Author Management, or exits. Book
-Management supports add, view, search, update, delete, and author-grouped views.
-Author Management supports adding, viewing, updating, and deleting authors.
-Search accepts a partial title, ISBN, or author name. Rich tables show book
-titles, authors, ISBNs, and prices in aligned columns.
-
-When adding or editing a book, the user chooses an existing author or creates
-one through an author form before saving the book. The flow returns to the book
-form after author creation so the user can finish the original action. The
-preview allows the user to save, edit, or cancel. All cancellation and back
-actions return to a usable menu without closing the program.
-
-## Data and persistence
-
-The program stores data in a local MySQL database managed by Docker Compose. A
-book references one author; an author can be referenced by many books. Records
-persist across application and container restarts through a named Docker
-volume. The database contains `books` and `authors` tables. The complete field
-definitions, constraints, migration, and SQL behavior are documented in
-`plan.md`.
-
-## Out of scope
-
-- User accounts, authentication, and separate household-member histories.
-- Book loans, due dates, multiple physical copies, or shelf locations.
-- Online book lookup, synchronization, or cloud hosting.
-- A graphical or web interface.
-- Summaries, potential-reading lists, genres, and tags in this release.
+Keep these out of this author phase: family-written summaries, a potential
+books list, genres, tags, family-member profiles, and per-person reading
+histories.
 
 ## Acceptance criteria
 
-- A user can create authors and link each book to exactly one author.
-- A book form can create a missing author and return to the pending book form.
-- Existing book add, list, search, update, and delete workflows continue to work.
-- ISBN can be omitted; supplied ISBN values are validated and unique.
-- Books can be searched by title, ISBN, or author name and viewed grouped by
-  author.
-- An author with linked books cannot be deleted without resolving those links.
-- Escape, arrow-key navigation, form previews, and confirmations work
-  consistently across both menus.
-- Books and authors persist in MySQL after restarting the application.
+- Every book in the final catalogue has exactly one existing author.
+- An author can be added with a valid unique name and a required past or
+  present birth date.
+- Duplicate names are rejected even when capitalization differs.
+- The displayed book count is derived from linked books and updates after
+  adding or deleting a book.
+- Author search is partial and case-insensitive.
+- A user can create an author from a pending book form without losing the
+  book's entered fields; Escape during author creation returns to that form.
+- Book author selection and update are searchable and use arrow navigation.
+- Author management supports add, view, search, and edit, with no delete
+  action.
+- Editing an author updates the details displayed for every linked book.
+- The grouped view has one row per author, supports keyboard expand/collapse,
+  and includes authors with zero books.
+- The one-time migration clears old prototype book rows and leaves the schema
+  enforcing the required author relationship.
+- Existing book title, optional ISBN, price, search, and CRUD behavior continue
+  to work.

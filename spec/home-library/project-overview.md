@@ -31,17 +31,21 @@ presentation while solving a real record-keeping problem.
 ## Current MVP
 
 The main menu has Book Management and Author Management. Users can add, view,
-search, update, and delete book records; manage author names; and view books
-grouped by author. A book has a title, one author, an optional ISBN, and a price
-in Indian rupees. Each author can be connected to many books, while each book
-has one author. A missing author can be added from the book form, after which
-the user returns to finish entering the book.
+search, update, and delete book records; add, view, search, and edit authors;
+and view books grouped by author. A book has a title, exactly one required
+author, an optional ISBN, and a price in Indian rupees. Each author has a
+unique name, date of birth, and a displayed count of linked books. The count is
+calculated by the app rather than entered by the user.
 
-Search accepts part of a title, ISBN, or author name. Results are displayed in
-tables that show enough information to identify the book. Deleting a book
-requires confirmation. An author with linked books cannot be removed until the
-books are reassigned or deleted. The MVP is a local shared catalogue; it does
-not identify which family member read each title or record when it was read.
+If an author is missing while adding or editing a book, the user can create
+that author inline and return to the unfinished book form with its details
+preserved. Author selection and search use arrow-key navigation. Search accepts
+a partial, case-insensitive title, ISBN, or author name. The grouped view shows
+one row per author and lets users expand a row to see its books. Authors cannot
+be deleted. The one-time migration discards book rows left by the earlier
+prototype because they do not have required authors. The MVP is a local shared
+catalogue; it does not identify which family member read each title or record
+when it was read.
 
 <div style="page-break-after: always"></div>
 
