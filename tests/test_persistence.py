@@ -65,17 +65,14 @@ class FakeConnection:
 
 
 class SchemaCursor(FakeCursor):
-    def __init__(self, books_exist=False, author_id_exists=False, versioned=False, failing_statement=None):
+    def __init__(self, books_exist=False, author_id_exists=False, failing_statement=None):
         super().__init__(failing_statement)
         self.books_exist = books_exist
         self.author_id_exists = author_id_exists
-        self.versioned = versioned
 
     def execute(self, statement, params=None):
         super().execute(statement, params)
-        if "SELECT COUNT(*) FROM schema_version" in statement:
-            self.result = (int(self.versioned),)
-        elif "table_name = %s" in statement and "information_schema.tables" in statement:
+        if "table_name = %s" in statement and "information_schema.tables" in statement:
             self.result = (int(self.books_exist),)
         elif "column_name = %s" in statement:
             self.result = (int(self.author_id_exists),)
@@ -167,7 +164,7 @@ class SchemaTests(unittest.TestCase):
         self.assertIn("price DECIMAL(10, 2) NOT NULL", create_books)
         self.assertIn("CHECK (price >= 0)", create_books)
         self.assertIn("REFERENCES authors(id) ON DELETE RESTRICT", create_books)
-        self.assertIn("INSERT IGNORE INTO schema_version (version) VALUES (%s)", statements)
+        self.assertFalse(any("schema_version" in item for item in statements))
         self.assertIn(("commit",), self.connection.calls)
         self.assertTrue(self.connection.cursor_value.closed)
 
@@ -181,6 +178,7 @@ class SchemaTests(unittest.TestCase):
         self.assertIn("author_id INT NOT NULL", create_books)
         self.assertIn("isbn VARCHAR(13) NULL UNIQUE", create_books)
         self.assertFalse(any("ALTER TABLE" in statement for statement in statements))
+        self.assertFalse(any("schema_version" in statement for statement in statements))
 
     def test_rejects_unsafe_database_name_before_opening_cursor(self):
         with self.assertRaisesRegex(PersistenceError, "unsupported characters"):
@@ -195,18 +193,14 @@ class SchemaTests(unittest.TestCase):
         self.assertIn(("rollback",), self.connection.calls)
         self.assertTrue(self.connection.cursor_value.closed)
 
-    def test_versioned_database_does_not_repeat_legacy_cleanup(self):
-        self.connection.cursor_value = SchemaCursor(versioned=True)
+    def test_current_database_is_not_dropped_or_altered_on_restart(self):
+        self.connection.cursor_value = SchemaCursor(books_exist=True, author_id_exists=True)
         initialize_schema(self.connection, "home_library_test")
-        self.assertNotIn("DELETE FROM books", self.connection.cursor_value.statements)
         self.assertNotIn("DROP TABLE books", self.connection.cursor_value.statements)
-        self.assertNotIn(
-            "INSERT IGNORE INTO schema_version (version) VALUES (%s)",
-            self.connection.cursor_value.statements,
-        )
         self.assertFalse(
             any("ALTER TABLE" in statement for statement in self.connection.cursor_value.statements)
         )
+        self.assertFalse(any("schema_version" in statement for statement in self.connection.cursor_value.statements))
 
 
 if __name__ == "__main__":

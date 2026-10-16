@@ -5,9 +5,6 @@ from mysql.connector import Error
 
 from .errors import PersistenceError
 
-SCHEMA_VERSION = 2
-
-
 def _count(cursor, query, params=()):
     cursor.execute(query, params)
     return cursor.fetchone()[0]
@@ -64,36 +61,6 @@ def use_database(cursor, database_name):
     cursor.execute(f"USE `{database_name}`")
 
 
-def ensure_schema_compatibility(cursor, connection):
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS schema_version (version INT NOT NULL PRIMARY KEY)"
-    )
-    versioned = _count(
-        cursor,
-        "SELECT COUNT(*) FROM schema_version WHERE version = %s",
-        (SCHEMA_VERSION,),
-    )
-    if versioned:
-        return
-
-    if _table_exists(cursor, "books") and not _column_exists(cursor, "books", "author_id"):
-        warnings.warn(
-            "The Home Library migration will clear old prototype books "
-            "because those records have no author.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        cursor.execute("DROP TABLE books")
-
-    _create_authors(cursor)
-    _create_books(cursor)
-    cursor.execute(
-        "INSERT IGNORE INTO schema_version (version) VALUES (%s)",
-        (SCHEMA_VERSION,),
-    )
-    connection.commit()
-
-
 def initialize_schema(connection, database_name="home_library"):
     if not isinstance(database_name, str) or not re.fullmatch(r"[A-Za-z0-9_]+", database_name):
         raise PersistenceError("Database name contains unsupported characters.")
@@ -102,8 +69,15 @@ def initialize_schema(connection, database_name="home_library"):
     try:
         cursor = connection.cursor()
         use_database(cursor, database_name)
-        ensure_schema_compatibility(cursor, connection)
         _create_authors(cursor)
+        if _table_exists(cursor, "books") and not _column_exists(cursor, "books", "author_id"):
+            warnings.warn(
+                "The Home Library setup will clear old prototype books "
+                "because those records have no author.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            cursor.execute("DROP TABLE books")
         _create_books(cursor)
         connection.commit()
     except Error as error:
