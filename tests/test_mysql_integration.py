@@ -1,12 +1,14 @@
 import os
 import re
 import unittest
+import warnings
+from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
 import mysql.connector
 
-from home_library.domain import BookDraft
+from home_library.domain import AuthorDraft, BookDraft
 from home_library.persistence.database import connect_database
 from home_library.persistence.errors import PersistenceError
 from home_library.use_cases.books import (
@@ -16,6 +18,13 @@ from home_library.use_cases.books import (
     delete_book,
     get_books,
     update_book,
+)
+from home_library.use_cases.authors import (
+    DuplicateAuthorName,
+    create_author,
+    get_authors,
+    get_books_grouped_by_author,
+    update_author,
 )
 
 
@@ -60,7 +69,10 @@ class MySQLBookIntegrationTests(unittest.TestCase):
             cursor.close()
             admin.close()
 
-        cls.database = connect_database(cls.database_name)
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            cls.database = connect_database(cls.database_name)
+        cls.migration_warnings = [str(item.message) for item in captured]
         cursor = cls.database._connection.cursor()
         try:
             cursor.execute(
@@ -93,25 +105,53 @@ class MySQLBookIntegrationTests(unittest.TestCase):
         with self.database.unit_of_work() as uow:
             for book in get_books(uow):
                 delete_book(uow, book.id)
+            authors = get_authors(uow, "Integration Author")
+            if authors:
+                self.author_id = authors[0].id
+            else:
+                author = create_author(
+                    uow,
+                    AuthorDraft("Integration Author", date(1980, 1, 1)),
+                )
+                self.author_id = author.id
             uow.commit()
 
-    def add_book(self, title, isbn=None, price="0"):
-        draft = BookDraft(title, isbn, price)
+    def add_book(self, title, isbn=None, price="0", author_id=None):
+        draft = BookDraft(title, isbn, price, author_id or self.author_id)
         with self.database.unit_of_work() as uow:
             book = create_book(uow, draft)
             uow.commit()
             return book
 
-    def test_schema_migration_makes_isbn_optional_and_preserves_existing_records(self):
+    def test_schema_migration_clears_legacy_books_and_adds_required_author_fk(self):
         self.assertEqual(self.migrated_isbn_nullable, "YES")
-        self.assertEqual(self.migrated_existing_record[0:2], ("Migration check", "9780306406157"))
-        self.assertEqual(self.migrated_existing_record[2], Decimal("1.25"))
+        self.assertIsNone(self.migrated_existing_record)
+        self.assertTrue(any("clear old prototype books" in item for item in self.migration_warnings))
+        cursor = self.database._connection.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'books' "
+                "AND COLUMN_NAME = 'author_id' AND IS_NULLABLE = 'NO'",
+                (self.database_name,),
+            )
+            self.assertEqual(cursor.fetchone()[0], 1)
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.key_column_usage "
+                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'books' "
+                "AND COLUMN_NAME = 'author_id' AND REFERENCED_TABLE_NAME = 'authors'",
+                (self.database_name,),
+            )
+            self.assertEqual(cursor.fetchone()[0], 1)
+        finally:
+            cursor.close()
 
     def test_create_and_read_book_with_optional_isbn_and_decimal_price(self):
         created = self.add_book("The Hobbit", None, "19.5")
         self.assertIsNotNone(created.id)
         self.assertEqual(created.title, "The Hobbit")
         self.assertIsNone(created.isbn)
+        self.assertEqual(created.author_name, "Integration Author")
         self.assertEqual(created.price, Decimal("19.50"))
         with self.database.unit_of_work() as uow:
             found = get_books(uow)
@@ -130,6 +170,11 @@ class MySQLBookIntegrationTests(unittest.TestCase):
             self.assertEqual(get_books(uow, "Two Cities"), [title_match])
             self.assertEqual(get_books(uow, "080442"), [isbn_match])
 
+    def test_search_matches_author_name(self):
+        book = self.add_book("A Book By Frank")
+        with self.database.unit_of_work() as uow:
+            self.assertEqual(get_books(uow, "Integration Author"), [book])
+
     def test_search_is_parameterized_for_quotes_in_title(self):
         book = self.add_book("Reader's Guide")
         with self.database.unit_of_work() as uow:
@@ -145,11 +190,11 @@ class MySQLBookIntegrationTests(unittest.TestCase):
         self.add_book("First", "9780306406157")
         with self.database.unit_of_work() as uow:
             with self.assertRaises(DuplicateISBN):
-                create_book(uow, BookDraft("Second", "9780306406157", "2"))
+                create_book(uow, BookDraft("Second", "9780306406157", "2", self.author_id))
 
     def test_update_can_keep_its_own_isbn(self):
         book = self.add_book("Original", "9780306406157", "10")
-        revised = BookDraft("Revised", "9780306406157", "15.25")
+        revised = BookDraft("Revised", "9780306406157", "15.25", self.author_id)
         with self.database.unit_of_work() as uow:
             result = update_book(uow, book.id, revised)
             uow.commit()
@@ -158,7 +203,7 @@ class MySQLBookIntegrationTests(unittest.TestCase):
     def test_update_can_remove_isbn(self):
         book = self.add_book("Original", "9780306406157")
         with self.database.unit_of_work() as uow:
-            result = update_book(uow, book.id, BookDraft("Revised", None, "0"))
+            result = update_book(uow, book.id, BookDraft("Revised", None, "0", self.author_id))
             uow.commit()
         self.assertIsNone(result.isbn)
 
@@ -167,12 +212,12 @@ class MySQLBookIntegrationTests(unittest.TestCase):
         second = self.add_book("Second", "080442957X")
         with self.database.unit_of_work() as uow:
             with self.assertRaises(DuplicateISBN):
-                update_book(uow, second.id, BookDraft("Second", first.isbn, "0"))
+                update_book(uow, second.id, BookDraft("Second", first.isbn, "0", self.author_id))
 
     def test_update_of_missing_book_raises_not_found(self):
         with self.database.unit_of_work() as uow:
             with self.assertRaises(BookNotFound):
-                update_book(uow, 999999, BookDraft("Missing", None, "0"))
+                update_book(uow, 999999, BookDraft("Missing", None, "0", self.author_id))
 
     def test_delete_removes_book_after_commit(self):
         book = self.add_book("Temporary")
@@ -189,9 +234,63 @@ class MySQLBookIntegrationTests(unittest.TestCase):
 
     def test_uncommitted_create_is_rolled_back(self):
         with self.database.unit_of_work() as uow:
-            created = create_book(uow, BookDraft("Rolled Back", None, "1"))
+            created = create_book(uow, BookDraft("Rolled Back", None, "1", self.author_id))
         with self.database.unit_of_work() as uow:
             self.assertIsNone(next((book for book in get_books(uow) if book.id == created.id), None))
+
+    def test_author_names_are_unique_without_regard_to_case(self):
+        with self.database.unit_of_work() as uow:
+            with self.assertRaises(DuplicateAuthorName):
+                create_author(uow, AuthorDraft("integration author", date(1985, 2, 3)))
+
+    def test_author_search_is_partial_and_case_insensitive(self):
+        with self.database.unit_of_work() as uow:
+            authors = get_authors(uow, "INTEGRATION")
+            self.assertEqual([author.id for author in authors], [self.author_id])
+
+    def test_author_book_count_changes_when_a_book_is_added_and_deleted(self):
+        book = self.add_book("Counted Book")
+        with self.database.unit_of_work() as uow:
+            self.assertEqual(get_authors(uow, "Integration Author")[0].book_count, 1)
+            delete_book(uow, book.id)
+            uow.commit()
+        with self.database.unit_of_work() as uow:
+            self.assertEqual(get_authors(uow, "Integration Author")[0].book_count, 0)
+
+    def test_author_update_is_reflected_in_books_and_count(self):
+        book = self.add_book("Authored Book")
+        with self.database.unit_of_work() as uow:
+            update_author(uow, self.author_id, AuthorDraft("Updated Author", date(1980, 1, 1)))
+            uow.commit()
+        with self.database.unit_of_work() as uow:
+            updated = get_books(uow, "Updated Author")[0]
+            self.assertEqual((updated.id, updated.author_id, updated.author_name),
+                             (book.id, self.author_id, "Updated Author"))
+            self.assertEqual(get_authors(uow, "Updated Author")[0].book_count, 1)
+
+    def test_grouped_books_includes_authors_with_zero_books(self):
+        with self.database.unit_of_work() as uow:
+            empty_author = create_author(uow, AuthorDraft("Empty Shelf Author", date(1975, 3, 4)))
+            uow.commit()
+        self.add_book("Grouped Book")
+        with self.database.unit_of_work() as uow:
+            groups = get_books_grouped_by_author(uow)
+        by_id = {group.author.id: group for group in groups}
+        self.assertEqual(by_id[empty_author.id].author.book_count, 0)
+        self.assertEqual(by_id[empty_author.id].books, ())
+        self.assertEqual([book.title for book in by_id[self.author_id].books], ["Grouped Book"])
+
+    def test_book_can_be_reassigned_to_another_author(self):
+        book = self.add_book("Reassign Me")
+        with self.database.unit_of_work() as uow:
+            new_author = create_author(uow, AuthorDraft("New Author", date(1960, 1, 1)))
+            revised = update_book(
+                uow,
+                book.id,
+                BookDraft(book.title, book.isbn, book.price, new_author.id),
+            )
+            uow.commit()
+        self.assertEqual((revised.author_id, revised.author_name), (new_author.id, "New Author"))
 
     def test_schema_rejects_unsafe_database_name(self):
         with self.assertRaises(PersistenceError):

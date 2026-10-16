@@ -13,11 +13,20 @@ class FakeCursor:
         self.statements = []
         self.closed = False
         self.failing_statement = failing_statement
+        self.executions = []
+        self.result = None
 
-    def execute(self, statement):
+    def execute(self, statement, params=None):
         self.statements.append(statement)
+        self.executions.append((statement, params))
         if statement == self.failing_statement:
             raise Error("statement failed")
+
+    def fetchone(self):
+        return self.result
+
+    def fetchall(self):
+        return []
 
     def close(self):
         self.closed = True
@@ -53,6 +62,25 @@ class FakeConnection:
         if self.failure == "commit":
             raise Error("commit failed")
         self.in_transaction = False
+
+
+class SchemaCursor(FakeCursor):
+    def __init__(self, books_exist=False, author_id_exists=False, versioned=False, failing_statement=None):
+        super().__init__(failing_statement)
+        self.books_exist = books_exist
+        self.author_id_exists = author_id_exists
+        self.versioned = versioned
+
+    def execute(self, statement, params=None):
+        super().execute(statement, params)
+        if "SELECT COUNT(*) FROM schema_version" in statement:
+            self.result = (int(self.versioned),)
+        elif "table_name = %s" in statement and "information_schema.tables" in statement:
+            self.result = (int(self.books_exist),)
+        elif "column_name = %s" in statement:
+            self.result = (int(self.author_id_exists),)
+        elif "information_schema.key_column_usage" in statement:
+            self.result = (int(self.author_id_exists),)
 
 
 class UnitOfWorkTests(unittest.TestCase):
@@ -125,19 +153,36 @@ class UnitOfWorkTests(unittest.TestCase):
 class SchemaTests(unittest.TestCase):
     def setUp(self):
         self.connection = FakeConnection()
-        self.connection.cursor_value = FakeCursor()
+        self.connection.cursor_value = SchemaCursor()
 
-    def test_creates_and_selects_requested_database_and_books_table(self):
+    def test_creates_final_schema_for_a_fresh_database(self):
         initialize_schema(self.connection, "home_library_test")
         statements = self.connection.cursor_value.statements
         self.assertEqual(statements[0], "CREATE DATABASE IF NOT EXISTS `home_library_test`")
         self.assertEqual(statements[1], "USE `home_library_test`")
-        self.assertIn("isbn VARCHAR(13) NULL UNIQUE", statements[2])
-        self.assertIn("price DECIMAL(10, 2) NOT NULL", statements[2])
-        self.assertIn("CHECK (price >= 0)", statements[2])
-        self.assertEqual(statements[3], "ALTER TABLE books MODIFY isbn VARCHAR(13) NULL")
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS authors" in item for item in statements))
+        create_books = next(item for item in statements if "CREATE TABLE IF NOT EXISTS books" in item)
+        self.assertIn("author_id INT NOT NULL", create_books)
+        self.assertIn("isbn VARCHAR(13) NULL UNIQUE", create_books)
+        self.assertIn("price DECIMAL(10, 2) NOT NULL", create_books)
+        self.assertIn("CHECK (price >= 0)", create_books)
+        self.assertIn("REFERENCES authors(id) ON DELETE RESTRICT", create_books)
+        self.assertIn("INSERT IGNORE INTO schema_version (version) VALUES (%s)", statements)
         self.assertIn(("commit",), self.connection.calls)
         self.assertTrue(self.connection.cursor_value.closed)
+
+    def test_migrates_old_database_by_clearing_only_prototype_books(self):
+        self.connection.cursor_value = SchemaCursor(books_exist=True)
+        with self.assertWarnsRegex(RuntimeWarning, "clear old prototype books"):
+            initialize_schema(self.connection, "home_library_test")
+        statements = self.connection.cursor_value.statements
+        self.assertIn("DELETE FROM books", statements)
+        self.assertIn("ALTER TABLE books ADD COLUMN author_id INT NOT NULL AFTER title", statements)
+        self.assertIn(
+            "ALTER TABLE books ADD CONSTRAINT fk_books_author "
+            "FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE RESTRICT",
+            statements,
+        )
 
     def test_rejects_unsafe_database_name_before_opening_cursor(self):
         with self.assertRaisesRegex(PersistenceError, "unsupported characters"):
@@ -146,11 +191,20 @@ class SchemaTests(unittest.TestCase):
 
     def test_mysql_schema_error_rolls_back_and_wraps(self):
         failing_statement = "USE `home_library_test`"
-        self.connection.cursor_value = FakeCursor(failing_statement)
+        self.connection.cursor_value = SchemaCursor(failing_statement=failing_statement)
         with self.assertRaisesRegex(PersistenceError, "Could not initialize the database"):
             initialize_schema(self.connection, "home_library_test")
         self.assertIn(("rollback",), self.connection.calls)
         self.assertTrue(self.connection.cursor_value.closed)
+
+    def test_versioned_database_does_not_repeat_legacy_cleanup(self):
+        self.connection.cursor_value = SchemaCursor(versioned=True)
+        initialize_schema(self.connection, "home_library_test")
+        self.assertNotIn("DELETE FROM books", self.connection.cursor_value.statements)
+        self.assertNotIn(
+            "INSERT IGNORE INTO schema_version (version) VALUES (%s)",
+            self.connection.cursor_value.statements,
+        )
 
 
 if __name__ == "__main__":

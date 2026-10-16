@@ -1,4 +1,5 @@
 from home_library.domain import Book, BookDraft
+from home_library.persistence import authors as author_store
 from home_library.persistence import books as book_store
 from home_library.persistence.errors import DuplicateISBNRecord
 
@@ -8,6 +9,10 @@ class BookNotFound(Exception):
 
 
 class DuplicateISBN(Exception):
+    pass
+
+
+class BookAuthorNotFound(Exception):
     pass
 
 
@@ -26,6 +31,8 @@ def find_isbn_conflict(unit_of_work, isbn: str | None, exclude_id=None) -> bool:
 
 
 def create_book(unit_of_work, draft: BookDraft) -> Book:
+    if not author_store.author_id_exists(unit_of_work, draft.author_id):
+        raise BookAuthorNotFound(f"Author {draft.author_id} was not found.")
     if find_isbn_conflict(unit_of_work, draft.isbn):
         raise DuplicateISBN("That ISBN is already in your collection.")
     try:
@@ -35,6 +42,8 @@ def create_book(unit_of_work, draft: BookDraft) -> Book:
 
 
 def update_book(unit_of_work, book_id: int, draft: BookDraft) -> Book:
+    if not author_store.author_id_exists(unit_of_work, draft.author_id):
+        raise BookAuthorNotFound(f"Author {draft.author_id} was not found.")
     if find_isbn_conflict(unit_of_work, draft.isbn, book_id):
         raise DuplicateISBN("That ISBN is already in your collection.")
     try:

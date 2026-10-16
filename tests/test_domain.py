@@ -1,15 +1,22 @@
 import unittest
 from dataclasses import FrozenInstanceError
+from datetime import date, timedelta
 from decimal import Decimal
 
 from home_library.domain import (
+    Author,
+    AuthorDraft,
     Book,
     BookDraft,
+    InvalidAuthorName,
+    InvalidBirthDate,
     InvalidISBN,
     InvalidPrice,
     InvalidTitle,
     normalize_isbn,
     parse_price,
+    parse_birth_date,
+    validate_author_name,
     validate_title,
 )
 
@@ -68,21 +75,66 @@ class BookDomainTests(unittest.TestCase):
                     parse_price(value)
 
     def test_draft_normalizes_every_field(self):
-        draft = BookDraft(" Dune ", "978-0-306-40615-7", Decimal("12.5"))
+        draft = BookDraft(" Dune ", "978-0-306-40615-7", Decimal("12.5"), 1)
         self.assertEqual(draft.title, "Dune")
         self.assertEqual(draft.isbn, "9780306406157")
         self.assertEqual(draft.price, Decimal("12.50"))
 
     def test_draft_accepts_optional_isbn(self):
-        self.assertIsNone(BookDraft("Dune", None, "0").isbn)
+        self.assertIsNone(BookDraft("Dune", None, "0", 1).isbn)
 
     def test_book_and_draft_are_immutable(self):
-        book = Book(1, "Dune", None, Decimal("12.00"))
-        draft = BookDraft("Dune", None, "12")
+        book = Book(1, "Dune", None, Decimal("12.00"), 1, "Frank Herbert")
+        draft = BookDraft("Dune", None, "12", 1)
         with self.assertRaises(FrozenInstanceError):
             book.title = "Changed"
         with self.assertRaises(FrozenInstanceError):
             draft.title = "Changed"
+
+    def test_book_draft_rejects_missing_or_invalid_author_id(self):
+        for author_id in (None, 0, -1, "1", True):
+            with self.subTest(author_id=author_id):
+                with self.assertRaises(ValueError):
+                    BookDraft("Dune", None, "12", author_id)
+
+
+class AuthorDomainTests(unittest.TestCase):
+    def test_author_name_is_trimmed_and_accepts_unicode_and_punctuation(self):
+        self.assertEqual(validate_author_name("  J. R. R. Tolkien  "), "J. R. R. Tolkien")
+        self.assertEqual(validate_author_name("  Émile Zola  "), "Émile Zola")
+
+    def test_author_name_rejects_blank_short_digit_only_and_numeric_values(self):
+        for value in ("", "  ", "A", "123", "James 2", None, 8, "١abc"):
+            with self.subTest(value=value):
+                with self.assertRaises(InvalidAuthorName):
+                    validate_author_name(value)
+
+    def test_author_name_accepts_200_characters_and_rejects_longer_names(self):
+        self.assertEqual(len(validate_author_name("A" * 200)), 200)
+        with self.assertRaises(InvalidAuthorName):
+            validate_author_name("A" * 201)
+
+    def test_birth_date_parses_iso_date_and_date_objects(self):
+        expected = date(1970, 5, 21)
+        self.assertEqual(parse_birth_date("1970-05-21"), expected)
+        self.assertEqual(parse_birth_date(expected), expected)
+
+    def test_birth_date_rejects_invalid_and_future_dates(self):
+        for value in ("2023-02-29", "21-05-1970", "not-a-date", None, 1970):
+            with self.subTest(value=value):
+                with self.assertRaises(InvalidBirthDate):
+                    parse_birth_date(value)
+        with self.assertRaises(InvalidBirthDate):
+            parse_birth_date(date.today() + timedelta(days=1))
+
+    def test_author_draft_normalizes_both_required_fields(self):
+        draft = AuthorDraft("  Ursula Le Guin ", "1929-10-21")
+        self.assertEqual(draft.name, "Ursula Le Guin")
+        self.assertEqual(draft.birth_date, date(1929, 10, 21))
+
+    def test_author_record_includes_computed_book_count(self):
+        author = Author(4, "Ursula Le Guin", date(1929, 10, 21), 3)
+        self.assertEqual(author.book_count, 3)
 
 
 if __name__ == "__main__":

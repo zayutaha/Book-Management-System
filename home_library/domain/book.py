@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-from .errors import InvalidISBN, InvalidPrice, InvalidTitle
+from .errors import InvalidISBN, InvalidPrice, InvalidTitle, ValidationError
 
 
 @dataclass(frozen=True)
@@ -11,6 +11,8 @@ class Book:
     title: str
     isbn: str | None
     price: Decimal
+    author_id: int
+    author_name: str
 
 
 @dataclass(frozen=True)
@@ -18,11 +20,18 @@ class BookDraft:
     title: str
     isbn: str | None
     price: Decimal
+    author_id: int
 
     def __post_init__(self):
         object.__setattr__(self, "title", validate_title(self.title))
         object.__setattr__(self, "isbn", normalize_isbn(self.isbn or ""))
         object.__setattr__(self, "price", parse_price(self.price))
+        if (
+            isinstance(self.author_id, bool)
+            or not isinstance(self.author_id, int)
+            or self.author_id < 1
+        ):
+            raise ValidationError("A book must have a valid author.")
 
 
 def validate_title(value):

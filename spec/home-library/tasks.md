@@ -13,55 +13,55 @@
 
 ## 2. Author domain and persistence
 
-- [ ] Add `Author` and `AuthorDraft` domain models.
-- [ ] Validate required author name and birth date; reject numeric names,
+- [x] Add `Author` and `AuthorDraft` domain models.
+- [x] Validate required author name and birth date; reject numeric names,
   names without a letter, names shorter than two characters, future dates,
   and invalid dates.
-- [ ] Add `authors` table with a case-insensitive unique name constraint and a
+- [x] Add `authors` table with a case-insensitive unique name constraint and a
   required `birth_date`.
-- [ ] Add required `books.author_id` foreign key with delete restriction.
-- [ ] Implement a versioned migration that discards old prototype book rows
+- [x] Add required `books.author_id` foreign key with delete restriction.
+- [x] Implement a versioned migration that discards old prototype book rows
   once and creates the final required-author schema.
-- [ ] Add author persistence operations, including search and computed book
+- [x] Add author persistence operations, including search and computed book
   counts.
 
 ## 3. Author and book use cases
 
-- [ ] Implement author create, list, search, find, and update use cases.
-- [ ] Reject duplicate author names regardless of letter case, including
+- [x] Implement author create, list, search, find, and update use cases.
+- [x] Reject duplicate author names regardless of letter case, including
   conflicts detected by MySQL.
-- [ ] Require an author when creating or updating a book.
-- [ ] Return author-linked book details and grouped book results, including
+- [x] Require an author when creating or updating a book.
+- [x] Return author-linked book details and grouped book results, including
   authors with zero books.
-- [ ] Keep all writes within caller-owned Unit of Work transactions.
+- [x] Keep all writes within caller-owned Unit of Work transactions.
 
 ## 4. Rich terminal workflows
 
-- [ ] Add separate Book Management and Author Management main-menu entries.
-- [ ] Add author add, view, search, and edit workflows; provide no delete
+- [x] Add separate Book Management and Author Management main-menu entries.
+- [x] Add author add, view, search, and edit workflows; provide no delete
   action.
-- [ ] Show each author's derived book count and birth date.
-- [ ] Add searchable author selection to book create and update forms.
-- [ ] Support inline author creation and return to the pending book form with
+- [x] Show each author's derived book count and birth date.
+- [x] Add searchable author selection to book create and update forms.
+- [x] Support inline author creation and return to the pending book form with
   entered values intact and the new author selected.
-- [ ] Return to the pending book form when inline author creation is canceled.
-- [ ] Add author-grouped navigation with one row per author and keyboard
+- [x] Return to the pending book form when inline author creation is canceled.
+- [x] Add author-grouped navigation with one row per author and keyboard
   expand/collapse behavior.
-- [ ] Preserve book preview, validation, search, and deletion confirmation
+- [x] Preserve book preview, validation, search, and deletion confirmation
   behavior.
 
 ## 5. Verification
 
-- [ ] Test author domain validation and case-insensitive duplicate handling.
-- [ ] Test author CRUD use cases, derived counts, required book-author links,
+- [x] Test author domain validation and case-insensitive duplicate handling.
+- [x] Test author CRUD use cases, derived counts, required book-author links,
   and error cases.
-- [ ] Test MySQL foreign keys, counts, grouped results, and one-time prototype
+- [x] Test MySQL foreign keys, counts, grouped results, and one-time prototype
   data cleanup using a disposable database.
-- [ ] Test author menu routes, searchable author picker, inline create/cancel,
+- [x] Test author menu routes, searchable author picker, inline create/cancel,
   retained book form values, and grouped-view keyboard navigation.
-- [ ] Verify existing book fields and operations still work with required
+- [x] Verify existing book fields and operations still work with required
   authors.
-- [ ] Compile the application and validate Docker Compose configuration.
+- [x] Compile the application and validate Docker Compose configuration.
 
 ## 6. Later phases
 

@@ -19,3 +19,6 @@ __all__ = [
     "get_books",
     "update_book",
 ]
+from . import authors, books
+
+__all__ = ["authors", "books"]

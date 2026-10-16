@@ -5,22 +5,33 @@ from home_library.domain import Book
 from .errors import DuplicateISBNRecord, PersistenceError
 
 
+BOOK_COLUMNS = (
+    "b.id, b.title, b.isbn, b.price, b.author_id, a.name"
+)
+BOOK_FROM = " FROM books AS b JOIN authors AS a ON a.id = b.author_id"
+
+
 def _book_from_row(row):
-    return Book(id=row[0], title=row[1], isbn=row[2], price=row[3])
+    return Book(
+        id=row[0],
+        title=row[1],
+        isbn=row[2],
+        price=row[3],
+        author_id=row[4],
+        author_name=row[5],
+    )
 
 
 def find_books(unit_of_work, search=""):
     cursor = unit_of_work._cursor()
     try:
+        query = f"SELECT {BOOK_COLUMNS}{BOOK_FROM}"
         if search:
             pattern = f"%{search}%"
-            cursor.execute(
-                "SELECT id, title, isbn, price FROM books "
-                "WHERE title LIKE %s OR isbn LIKE %s ORDER BY title",
-                (pattern, pattern),
-            )
+            query += " WHERE b.title LIKE %s OR b.isbn LIKE %s OR a.name LIKE %s"
+            cursor.execute(query + " ORDER BY b.title", (pattern, pattern, pattern))
         else:
-            cursor.execute("SELECT id, title, isbn, price FROM books ORDER BY title")
+            cursor.execute(query + " ORDER BY b.title")
         return [_book_from_row(row) for row in cursor.fetchall()]
     except Error as error:
         raise PersistenceError(f"Could not read books: {error}") from error
@@ -32,7 +43,7 @@ def find_book(unit_of_work, book_id):
     cursor = unit_of_work._cursor()
     try:
         cursor.execute(
-            "SELECT id, title, isbn, price FROM books WHERE id = %s",
+            f"SELECT {BOOK_COLUMNS}{BOOK_FROM} WHERE b.id = %s",
             (book_id,),
         )
         row = cursor.fetchone()
@@ -64,8 +75,9 @@ def insert_book(unit_of_work, draft):
     cursor = unit_of_work._cursor()
     try:
         cursor.execute(
-            "INSERT INTO books (title, isbn, price) VALUES (%s, %s, %s)",
-            (draft.title, draft.isbn, draft.price),
+            "INSERT INTO books (title, author_id, isbn, price) "
+            "VALUES (%s, %s, %s, %s)",
+            (draft.title, draft.author_id, draft.isbn, draft.price),
         )
         book_id = cursor.lastrowid
     except IntegrityError as error:
@@ -83,8 +95,9 @@ def update_book(unit_of_work, book_id, draft):
     cursor = unit_of_work._cursor()
     try:
         cursor.execute(
-            "UPDATE books SET title = %s, isbn = %s, price = %s WHERE id = %s",
-            (draft.title, draft.isbn, draft.price, book_id),
+            "UPDATE books SET title = %s, author_id = %s, isbn = %s, price = %s "
+            "WHERE id = %s",
+            (draft.title, draft.author_id, draft.isbn, draft.price, book_id),
         )
     except IntegrityError as error:
         if error.errno == 1062:

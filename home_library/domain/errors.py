@@ -12,3 +12,11 @@ class InvalidISBN(ValidationError):
 
 class InvalidPrice(ValidationError):
     pass
+
+
+class InvalidAuthorName(ValidationError):
+    pass
+
+
+class InvalidBirthDate(ValidationError):
+    pass

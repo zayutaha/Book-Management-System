@@ -4,3 +4,7 @@ class PersistenceError(Exception):
 
 class DuplicateISBNRecord(PersistenceError):
     pass
+
+
+class DuplicateAuthorRecord(PersistenceError):
+    pass
